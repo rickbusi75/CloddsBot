@@ -13,7 +13,7 @@ import { getGlobalFreshnessTracker, type FreshnessTracker } from '../freshness';
 
 const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
 const REST_URL = 'https://clob.polymarket.com';
-const GAMMA_URL = 'https://gamma-api.polymarket.com';
+import { fetchGammaMarket, searchGammaMarkets } from './gamma';
 
 export interface PolymarketFeed extends EventEmitter {
   start: () => Promise<void>;
@@ -27,24 +27,6 @@ export interface PolymarketFeed extends EventEmitter {
     marketId: string,
     callback: (update: PriceUpdate) => void
   ) => () => void;
-}
-
-interface PolymarketMarket {
-  condition_id: string;
-  question_id: string;
-  tokens: Array<{
-    token_id: string;
-    outcome: string;
-    price: number;
-  }>;
-  question: string;
-  description: string;
-  end_date_iso: string;
-  active: boolean;
-  closed: boolean;
-  volume: string;
-  liquidity: string;
-  slug: string;
 }
 
 interface PolymarketOrderbookResponse {
@@ -379,20 +361,6 @@ export async function createPolymarketFeed(): Promise<PolymarketFeed> {
     }
   }
 
-  // Fetch market data from REST API
-  async function fetchMarket(marketId: string): Promise<Market | null> {
-    try {
-      const res = await fetch(`${GAMMA_URL}/markets/${marketId}`, { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) return null;
-
-      const data = (await res.json()) as PolymarketMarket;
-      return convertMarket(data);
-    } catch (err) {
-      logger.error({ err, marketId }, 'Failed to fetch market');
-      return null;
-    }
-  }
-
   async function fetchOrderbook(tokenId: string): Promise<Orderbook | null> {
     try {
       const res = await fetch(`${REST_URL}/orderbook`, {
@@ -444,48 +412,6 @@ export async function createPolymarketFeed(): Promise<PolymarketFeed> {
     }
   }
 
-  // Search markets
-  async function searchMarketsREST(query: string): Promise<Market[]> {
-    try {
-      const res = await fetch(
-        `${GAMMA_URL}/markets?_limit=20&active=true&closed=false&_q=${encodeURIComponent(query)}`,
-        { signal: AbortSignal.timeout(15000) }
-      );
-      if (!res.ok) return [];
-
-      const data = (await res.json()) as PolymarketMarket[];
-      return data.map(convertMarket);
-    } catch (err) {
-      logger.error({ err, query }, 'Failed to search markets');
-      return [];
-    }
-  }
-
-  function convertMarket(data: PolymarketMarket): Market {
-    return {
-      id: data.condition_id,
-      platform: 'polymarket' as Platform,
-      slug: data.slug,
-      question: data.question,
-      description: data.description,
-      outcomes: data.tokens.map((t) => ({
-        id: t.token_id,
-        tokenId: t.token_id,
-        name: t.outcome,
-        price: t.price,
-        volume24h: 0,
-      })),
-      volume24h: parseFloat(data.volume) || 0,
-      liquidity: parseFloat(data.liquidity) || 0,
-      endDate: data.end_date_iso ? new Date(data.end_date_iso) : undefined,
-      resolved: data.closed,
-      tags: [],
-      url: `https://polymarket.com/event/${data.slug}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-  }
-
   emitter.start = async () => {
     connect();
   };
@@ -507,7 +433,7 @@ export async function createPolymarketFeed(): Promise<PolymarketFeed> {
     if (cached) return cached;
 
     // Fetch from API
-    const market = await fetchMarket(marketId);
+    const market = await fetchGammaMarket(marketId);
     if (market) {
       setInMarketCache(marketId, market);
     }
@@ -515,7 +441,7 @@ export async function createPolymarketFeed(): Promise<PolymarketFeed> {
   };
 
   emitter.searchMarkets = async (query: string) => {
-    return searchMarketsREST(query);
+    return searchGammaMarkets(query);
   };
 
   emitter.getPrice = async (_platform: string, marketId: string) => {
