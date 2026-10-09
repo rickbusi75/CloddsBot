@@ -87,3 +87,20 @@ test('lookup supports numeric Gamma ID, condition ID and slug', async () => {
   respond({}, undefined, 404); assert.equal(await fetchGammaMarket('9999999'), null);
   respond({}, undefined, 429); await assert.rejects(fetchGammaMarket('562793'), /HTTP 429/);
 });
+
+
+test('feed adapter accepts the manager single-ID call and legacy platform/ID call', async () => {
+  const { createPolymarketFeed } = await import('../../src/feeds/polymarket');
+  const feed = await createPolymarketFeed();
+  let lookups = 0;
+  respond([fixture()], url => {
+    assert.equal(url.searchParams.get('condition_ids'), conditionId);
+    lookups++;
+  });
+  assert.equal((await feed.getMarket(conditionId))?.id, conditionId);
+  assert.equal((await feed.getMarket('polymarket', conditionId))?.id, conditionId);
+  assert.equal(lookups, 1, 'both forms share the same market cache');
+  respond({}, undefined, 503);
+  await assert.rejects(feed.searchMarkets('Senate'), /HTTP 503/);
+  await feed.stop();
+});

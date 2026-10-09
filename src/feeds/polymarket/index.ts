@@ -18,7 +18,7 @@ import { fetchGammaMarket, searchGammaMarkets } from './gamma';
 export interface PolymarketFeed extends EventEmitter {
   start: () => Promise<void>;
   stop: () => Promise<void>;
-  getMarket: (platform: string, marketId: string) => Promise<Market | null>;
+  getMarket: (marketIdOrPlatform: string, marketId?: string) => Promise<Market | null>;
   searchMarkets: (query: string) => Promise<Market[]>;
   getPrice: (platform: string, marketId: string) => Promise<number | null>;
   getOrderbook: (platform: string, marketId: string) => Promise<Orderbook | null>;
@@ -427,7 +427,9 @@ export async function createPolymarketFeed(): Promise<PolymarketFeed> {
     }
   };
 
-  emitter.getMarket = async (_platform: string, marketId: string) => {
+  emitter.getMarket = async (marketIdOrPlatform: string, legacyMarketId?: string) => {
+    // FeedManager calls getMarket(id); retain the older getMarket(platform, id) form.
+    const marketId = legacyMarketId ?? marketIdOrPlatform;
     // Check cache first (with TTL)
     const cached = getFromMarketCache(marketId);
     if (cached) return cached;
