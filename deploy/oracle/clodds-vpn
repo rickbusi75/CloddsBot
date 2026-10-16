@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $EUID -eq 0 ]] || exec sudo -n "$0" "$@"
+cd /srv/lab/projects/cloddsbot
+exec 9>/run/lock/clodds-vpn.lock
+flock 9
+cfg=/srv/lab/config/cloddsbot
+mode=$(cat "$cfg/network-mode" 2>/dev/null || echo direct)
+compose() { docker compose -f "compose.$1.yaml" "${@:2}"; }
+case "${1:-status}" in
+on|off)
+ target=direct; [[ $1 != on ]] || target=vpn
+ if [[ $target == vpn ]]; then
+  python3 - "$cfg/mullvad.env" <<'PY'
+import sys
+v=dict(l.split('=',1) for l in open(sys.argv[1]).read().splitlines() if '=' in l and not l.startswith('#'))
+missing=[k for k in ['WIREGUARD_PRIVATE_KEY','WIREGUARD_ADDRESSES'] if not v.get(k,'').strip()]
+if missing: sys.exit('Mullvad non configure : renseigner '+', '.join(missing)+' dans /srv/lab/config/cloddsbot/mullvad.env. Mode actuel conserve.')
+if not any(v.get(k,'').strip() for k in ['SERVER_COUNTRIES','SERVER_CITIES','SERVER_HOSTNAMES']): sys.exit('Choisir un serveur ou une localisation Mullvad dans mullvad.env. Mode actuel conserve.')
+PY
+ fi
+ compose "$target" config -q
+ if [[ $mode == "$target" ]]; then
+  compose "$target" up -d --wait --wait-timeout 180
+ else
+  compose "$mode" stop bot
+  compose "$mode" rm -f bot
+  if [[ $mode == vpn ]]; then compose vpn stop gluetun; compose vpn rm -f gluetun; fi
+  if ! compose "$target" up -d --wait --wait-timeout 180; then
+   echo "Echec de la bascule. Retour au mode precedent : $mode" >&2
+   compose "$target" down
+   compose "$mode" up -d --wait --wait-timeout 180
+   exit 1
+  fi
+ fi
+ printf '%s\n' "$target" > "$cfg/network-mode"
+ echo "Mode actif : $target"
+ ;;
+status)
+ echo "Mode enregistre : $mode"
+ compose "$mode" ps
+ cid=$(compose "$mode" ps -q bot)
+ if [[ -n $cid ]]; then
+  echo 'IP de sortie du bot :'
+  docker exec "$cid" node -e "fetch('https://api.ipify.org',{signal:AbortSignal.timeout(15000)}).then(r=>r.text()).then(console.log).catch(e=>{console.error(e.message);process.exit(1)})"
+ fi
+ ;;
+start) compose "$mode" up -d --wait --wait-timeout 180 ;;
+stop) compose "$mode" stop ;;
+restart) compose "$mode" up -d --force-recreate --wait --wait-timeout 180 ;;
+logs) compose "$mode" logs --tail 80 bot ;;
+*) echo 'Usage : clodds-vpn on|off|status|start|stop|restart|logs'; exit 2 ;;
+esac

@@ -16958,11 +16958,21 @@ export async function createAgentManager(
   executionService?: ExecutionServiceRef | null
 ): Promise<AgentManager> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is required');
-  }
-
-  const client = new Anthropic({ apiKey });
+  // Lab: allow configuration UI to start before Rick chooses an AI provider.
+  // No placeholder credential and no request is made without a real key.
+  let configuredClient: Anthropic | undefined = apiKey ? new Anthropic({ apiKey }) : undefined;
+  if (!apiKey) logger.warn('AI not configured: WebChat is available, AI calls require ANTHROPIC_API_KEY');
+  const client = new Proxy({} as Anthropic, {
+    get(_target, property) {
+      if (!configuredClient) {
+        const key = process.env.ANTHROPIC_API_KEY;
+        if (!key) throw new Error('IA non configuree : renseigner une cle API avant de demander une analyse.');
+        configuredClient = new Anthropic({ apiKey: key });
+      }
+      const value = Reflect.get(configuredClient, property, configuredClient);
+      return typeof value === 'function' ? value.bind(configuredClient) : value;
+    },
+  });
   const skills = createSkillManager(config.agents.defaults.workspace);
   let credentials: CredentialsManager;
   try {

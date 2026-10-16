@@ -1,0 +1,33 @@
+name: cloddsbot
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    env_file: /srv/lab/config/cloddsbot/mullvad.env
+    environment:
+      FIREWALL_INPUT_PORTS: '18789'
+    ports:
+      - '127.0.0.1:18789:18789'
+    restart: unless-stopped
+    mem_limit: 256m
+  bot:
+    image: lab/cloddsbot:1.9.1-c930628
+    init: true
+    env_file: /srv/lab/config/cloddsbot/bot.env
+    environment:
+      CLODDS_CONFIG_PATH: /config/clodds.json
+      npm_package_version: 1.9.1
+    volumes:
+      - /srv/lab/data/cloddsbot:/data
+      - /srv/lab/data/cloddsbot/transformers-cache:/app/.transformers-cache
+      - /srv/lab/config/cloddsbot/clodds.json:/config/clodds.json:ro
+      - /srv/lab/config/cloddsbot/bot.env:/app/.env
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 45s
+    mem_limit: 3g
+    cpus: 1.25
