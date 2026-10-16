@@ -44,11 +44,12 @@ async function balanceHandler(
   const wallet = getWallet();
   if (!wallet) return errorResult('Set HYPERLIQUID_WALLET');
   try {
-    const state = await hyperliquid.getUserState(wallet);
+    const [state, spot] = await Promise.all([hyperliquid.getUserState(wallet), hyperliquid.getSpotBalances(wallet)]);
     return JSON.stringify({
       accountValue: state.marginSummary.accountValue,
       marginUsed: state.marginSummary.totalMarginUsed,
       positions: state.assetPositions.length,
+      spotBalances: spot.filter(b => Number(b.total) !== 0).map(b => ({ coin: b.coin, total: b.total, hold: b.hold })),
     });
   } catch (err: unknown) {
     return JSON.stringify({ error: (err as Error).message });

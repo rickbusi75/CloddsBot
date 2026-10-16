@@ -535,6 +535,9 @@ export function createServer(
         { key: 'POLY_API_PASSPHRASE', label: 'Polymarket Passphrase', secret: true, required: false },
         { key: 'POLY_PRIVATE_KEY', label: 'Polymarket Private Key', secret: true, required: false },
         { key: 'POLY_FUNDER_ADDRESS', label: 'Polymarket Funder Address', secret: false, required: false },
+        { key: 'POLY_SIGNATURE_TYPE', label: 'Polymarket Signature Type (0 EOA, 1 Proxy, 2 Safe, 3 Deposit Wallet)', secret: false, required: false },
+        { key: 'DRY_RUN', label: 'Trading simulation (true/false)', secret: false, required: false },
+        { key: 'CLODDS_MAX_ORDER_USD', label: 'Maximum single order (USD)', secret: false, required: false },
         { key: 'KALSHI_API_KEY', label: 'Kalshi API Key', secret: true, required: false, helpUrl: 'https://kalshi.com/account/api' },
         { key: 'KALSHI_API_SECRET', label: 'Kalshi API Secret', secret: true, required: false },
         { key: 'MANIFOLD_API_KEY', label: 'Manifold API Key', secret: true, required: false, helpUrl: 'https://manifold.markets/account' },
@@ -669,6 +672,15 @@ export function createServer(
       }
       if (key === 'CLODDS_AI_PROVIDER' && !['anthropic', 'openrouter'].includes(val)) {
         res.status(400).json({ error: 'AI provider must be anthropic or openrouter' }); return;
+      }
+      if (key === 'POLY_SIGNATURE_TYPE' && val && !['0', '1', '2', '3'].includes(val)) {
+        res.status(400).json({ error: 'Invalid Polymarket signature type' }); return;
+      }
+      if (key === 'DRY_RUN' && !['true', 'false'].includes(val)) {
+        res.status(400).json({ error: 'Simulation must be true or false' }); return;
+      }
+      if (key === 'CLODDS_MAX_ORDER_USD' && (!val || !Number.isFinite(Number(val)) || Number(val) < 0)) {
+        res.status(400).json({ error: 'Order limit must be a non-negative USD amount' }); return;
       }
       if (key === 'CLODDS_MODEL' && val && !/^~?[\w./:-]+$/.test(val)) {
         res.status(400).json({ error: 'Invalid model ID' }); return;

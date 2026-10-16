@@ -627,7 +627,7 @@ export interface CredentialsManager {
   markSuccess: (userId: string, platform: Platform) => Promise<void>;
   markFailure: (userId: string, platform: Platform) => Promise<void>;
   isInCooldown: (userId: string, platform: Platform) => Promise<boolean>;
-  buildTradingContext: (userId: string, sessionKey: string) => Promise<TradingContext>;
+  buildTradingContext: (userId: string, sessionKey: string, allowEnvironment?: boolean) => Promise<TradingContext>;
   listUserPlatforms: (userId: string) => Promise<Platform[]>;
 }
 

@@ -8,6 +8,8 @@
  * /creds check <platform> - Verify credentials work
  */
 
+import { getEnvironmentTradingCredentials } from '../../../credentials/environment.js';
+
 async function execute(args: string): Promise<string> {
   const parts = args.trim().split(/\s+/);
   const cmd = parts[0]?.toLowerCase() || 'help';
@@ -16,8 +18,8 @@ async function execute(args: string): Promise<string> {
     const credPath = ['..', '..', '..', 'credentials', 'index'].join('/');
     const dbPath = ['..', '..', '..', 'db', 'index'].join('/');
     const { createCredentialsManager } = await import(credPath);
-    const { createDatabase } = await import(dbPath);
-    const db = createDatabase();
+    const { initDatabase } = await import(dbPath);
+    const db = await initDatabase();
     const manager = createCredentialsManager(db);
     const userId = 'default';
 
@@ -28,12 +30,12 @@ async function execute(args: string): Promise<string> {
         let output = '**Stored Credentials**\n\n| Platform | Status |\n|----------|--------|\n';
         for (const platform of platforms) {
           const has = await manager.hasCredentials(userId, platform);
-          output += `| ${platform} | ${has ? 'Configured' : 'Not set'} |\n`;
+          output += `| ${platform} | ${has ? 'Configured (db)' : getEnvironmentTradingCredentials().has(platform) ? 'Configured (settings)' : 'Not set'} |\n`;
         }
         // Also check env vars for additional platforms
         output += `| Binance | ${process.env.BINANCE_API_KEY ? 'Configured (env)' : 'Not set'} |\n`;
         output += `| Bybit | ${process.env.BYBIT_API_KEY ? 'Configured (env)' : 'Not set'} |\n`;
-        output += `| Hyperliquid | ${process.env.HYPERLIQUID_API_KEY ? 'Configured (env)' : 'Not set'} |\n`;
+        output += `| Hyperliquid | ${process.env.HYPERLIQUID_WALLET && process.env.HYPERLIQUID_PRIVATE_KEY ? 'Configured (env)' : 'Not set'} |\n`;
         return output;
       }
 
@@ -68,7 +70,8 @@ async function execute(args: string): Promise<string> {
         if (!parts[1]) return 'Usage: /creds check <platform>';
         const platform = parts[1].toLowerCase();
         const has = await manager.hasCredentials(userId, platform as any);
-        if (!has) return `No credentials stored for **${platform}**. Use \`/creds set\` first.`;
+        if (!has && getEnvironmentTradingCredentials().has(platform as any)) return `Credentials for **${platform}** are configured in Environment Setup. Use the balance command to verify the API connection.`;
+        if (!has) return `No credentials stored for **${platform}**. Configure them in Profile → Environment Setup.`;
         const creds = await manager.getCredentials(userId, platform as any);
         if (creds) {
           await manager.markSuccess(userId, platform as any);

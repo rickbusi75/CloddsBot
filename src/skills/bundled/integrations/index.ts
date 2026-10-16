@@ -15,8 +15,8 @@ async function execute(args: string): Promise<string> {
   try {
     const _credPath = '../../../credentials/index';
     const { createCredentialsManager } = await import(_credPath);
-    const { createDatabase } = await import('../../../db/index');
-    const db = createDatabase();
+    const { initDatabase } = await import('../../../db/index');
+    const db = await initDatabase();
     const manager = createCredentialsManager(db);
     const userId = 'default';
 
@@ -31,7 +31,7 @@ async function execute(args: string): Promise<string> {
           { name: 'Binance Futures', id: 'binance', env: 'BINANCE_API_KEY' },
           { name: 'Bybit', id: 'bybit', env: 'BYBIT_API_KEY' },
           { name: 'MEXC', id: 'mexc', env: 'MEXC_API_KEY' },
-          { name: 'Hyperliquid', id: 'hyperliquid', env: 'HYPERLIQUID_API_KEY' },
+          { name: 'Hyperliquid', id: 'hyperliquid', env: 'HYPERLIQUID_PRIVATE_KEY' },
         ];
 
         let output = '**Connected Integrations**\n\n';

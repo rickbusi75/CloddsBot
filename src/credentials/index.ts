@@ -31,6 +31,7 @@ import {
 } from '../types.js';
 import { Database } from '../db/index.js';
 import { logger } from '../utils/logger.js';
+import { getEnvironmentTradingCredentials } from './environment.js';
 
 // Encryption key from environment (lazy — read at call time so startup can auto-generate)
 function getEncryptionKey(): string | undefined {
@@ -151,7 +152,7 @@ export interface CredentialsManager {
    * Build TradingContext for tool execution
    * (Clawdbot-style factory pattern)
    */
-  buildTradingContext: (userId: string, sessionKey: string) => Promise<TradingContext>;
+  buildTradingContext: (userId: string, sessionKey: string, allowEnvironment?: boolean) => Promise<TradingContext>;
 
   /**
    * List all platforms user has credentials for
@@ -302,7 +303,7 @@ export function createCredentialsManager(db: Database): CredentialsManager {
       return new Date() < creds.cooldownUntil;
     },
 
-    async buildTradingContext(userId, sessionKey): Promise<TradingContext> {
+    async buildTradingContext(userId, sessionKey, allowEnvironment = false): Promise<TradingContext> {
       const platforms: Platform[] = ['polymarket', 'kalshi', 'manifold'];
       const credentials = new Map<Platform, PlatformCredentials>();
 
@@ -321,10 +322,18 @@ export function createCredentialsManager(db: Database): CredentialsManager {
         }
       }
 
+      // Only the authenticated operator WebChat opts in. Explicit per-user rows
+      // (including disabled/cooldown rows) always take precedence over settings.
+      if (allowEnvironment) for (const [platform, configured] of getEnvironmentTradingCredentials()) {
+        if (!db.getTradingCredentials(userId, platform)) credentials.set(platform, configured);
+      }
+
       // Get user settings for limits
       const user = db.getUser(userId);
       const raw = user?.settings?.maxOrderSize;
-      const maxOrderSize = (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) ? raw : 100;
+      const userLimit = (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) ? raw : 100;
+      const envLimit = process.env.CLODDS_MAX_ORDER_USD ? Number(process.env.CLODDS_MAX_ORDER_USD) : undefined;
+      const maxOrderSize = envLimit !== undefined && Number.isFinite(envLimit) && envLimit >= 0 ? Math.min(userLimit, envLimit) : userLimit;
 
       return {
         userId,
