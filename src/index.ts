@@ -1,3 +1,4 @@
+import { hasAiCredential } from './providers/agent-client';
 /**
  * Clodds - AI Assistant for Prediction Markets
  * Claude + Odds
@@ -115,9 +116,9 @@ function validateStartupRequirements(): void {
   const warnings: string[] = [];
 
   // Check for Anthropic API key (required for AI functionality)
-  if (!process.env.ANTHROPIC_API_KEY) {
-    errors.push(
-      'ANTHROPIC_API_KEY is not set. The AI agent will not function.\n' +
+  if (!hasAiCredential()) {
+    warnings.push(
+      'AI is not configured. Choose Anthropic or OpenRouter and add its key in WebChat settings.\n' +
       '  Fix: Add ANTHROPIC_API_KEY=sk-ant-... to your .env file\n' +
       '  Or run: clodds onboard'
     );

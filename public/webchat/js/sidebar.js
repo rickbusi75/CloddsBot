@@ -850,6 +850,7 @@ export class Sidebar {
       if (!r.ok) throw new Error('Failed to load');
       const data = await r.json();
       this._renderSettings(data.schema);
+      this._loadOpenRouterModels();
     } catch (err) {
       body.innerHTML = '<div class="settings-error">Failed to load settings. Check authentication.</div>';
     }
@@ -927,12 +928,20 @@ export class Sidebar {
         field.appendChild(envName);
 
         // Input
-        const input = document.createElement('input');
+        const isProvider = v.key === 'CLODDS_AI_PROVIDER';
+        const input = document.createElement(isProvider ? 'select' : 'input');
+        if (isProvider) {
+          for (const [value, text] of [['anthropic', 'Anthropic direct'], ['openrouter', 'OpenRouter']]) {
+            const option = document.createElement('option');
+            option.value = value; option.textContent = text; input.appendChild(option);
+          }
+          input.value = v.masked || 'anthropic';
+        }
         input.className = 'settings-input';
-        input.type = v.secret ? 'password' : 'text';
+        if (!isProvider) input.type = v.secret ? 'password' : 'text';
         input.placeholder = v.set ? v.masked : 'Not configured';
         input.dataset.key = v.key;
-        input.addEventListener('input', () => {
+        input.addEventListener(isProvider ? 'change' : 'input', () => {
           const val = input.value.trim();
           if (val) {
             this._settingsDirty[v.key] = val;
@@ -945,6 +954,15 @@ export class Sidebar {
             saveBtn.textContent = 'Save Changes';
           }
         });
+        if (v.key === 'CLODDS_MODEL') {
+          input.setAttribute('list', 'openrouter-model-options');
+          input.value = v.masked || '';
+          const options = document.createElement('datalist');
+          options.id = 'openrouter-model-options'; field.appendChild(options);
+          const hint = document.createElement('div'); hint.className = 'settings-env-name';
+          hint.textContent = 'OpenRouter : recherchez un modèle ou saisissez son identifiant complet. Les modèles avec outils sont signalés.';
+          field.appendChild(hint);
+        }
         field.appendChild(input);
 
         section.appendChild(field);
@@ -954,6 +972,25 @@ export class Sidebar {
     }
 
     body.appendChild(frag);
+  }
+
+  async _loadOpenRouterModels() {
+    const options = this.sidebarEl.querySelector('#openrouter-model-options');
+    if (!options) return;
+    try {
+      const token = Storage.get('webchat_token') || '';
+      const r = await fetch('/api/config/openrouter-models', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return; // Manual model entry remains available if the catalog is unavailable.
+      const data = await r.json();
+      if (!options.isConnected) return;
+      options.replaceChildren(...data.models.map(m => {
+        const option = document.createElement('option');
+        option.value = m.id; option.label = `${m.name}${m.tools ? ' · outils' : ''}`;
+        return option;
+      }));
+    } catch { /* Optional catalog, never blocks settings. */ }
   }
 
   async _saveSettings() {

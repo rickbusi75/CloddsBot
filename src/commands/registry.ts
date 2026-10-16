@@ -1025,7 +1025,7 @@ export function createDefaultCommands(): CommandDefinition[] {
       description: 'Show or change the current model',
       usage: '/model [sonnet|opus|haiku|claude-...]',
       handler: (args, ctx) => {
-        const defaultModel = process.env.ANTHROPIC_MODEL || 'claude-opus-4-6';
+        const defaultModel = process.env.CLODDS_MODEL || process.env.ANTHROPIC_MODEL || 'claude-opus-4-6';
         const currentModel =
           ctx.session.context.modelOverride || ctx.session.context.model || defaultModel;
 
@@ -1033,7 +1033,7 @@ export function createDefaultCommands(): CommandDefinition[] {
           return ['Current Model', currentModel, '', 'Usage: /model sonnet'].join('\n');
         }
 
-        const requested = args.toLowerCase();
+        const requested = args.trim();
         const aliases: Record<string, string> = {
           opus: 'claude-opus-4-6',
           'opus4.6': 'claude-opus-4-6',
@@ -1045,8 +1045,8 @@ export function createDefaultCommands(): CommandDefinition[] {
         };
 
         const resolved = aliases[requested] || requested;
-        if (!resolved.startsWith('claude-')) {
-          return 'Unknown model. Try: sonnet, opus, haiku.';
+        if (!resolved.startsWith('claude-') && !/^[\w.:-]+\/[\w./:-]+$/.test(resolved)) {
+          return 'Unknown model. Use a Claude alias or a full provider/model ID.';
         }
 
         ctx.session.context.modelOverride = resolved;

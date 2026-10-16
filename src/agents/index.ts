@@ -4,6 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAgentClient, getAiProvider } from '../providers/agent-client';
 import { spawn, spawnSync, ChildProcess, execSync, execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import { generateId as generateSecureId } from '../utils/id';
@@ -16957,22 +16958,7 @@ export async function createAgentManager(
   webhookToolProvider?: () => WebhookTool | undefined,
   executionService?: ExecutionServiceRef | null
 ): Promise<AgentManager> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  // Lab: allow configuration UI to start before Rick chooses an AI provider.
-  // No placeholder credential and no request is made without a real key.
-  let configuredClient: Anthropic | undefined = apiKey ? new Anthropic({ apiKey }) : undefined;
-  if (!apiKey) logger.warn('AI not configured: WebChat is available, AI calls require ANTHROPIC_API_KEY');
-  const client = new Proxy({} as Anthropic, {
-    get(_target, property) {
-      if (!configuredClient) {
-        const key = process.env.ANTHROPIC_API_KEY;
-        if (!key) throw new Error('IA non configuree : renseigner une cle API avant de demander une analyse.');
-        configuredClient = new Anthropic({ apiKey: key });
-      }
-      const value = Reflect.get(configuredClient, property, configuredClient);
-      return typeof value === 'function' ? value.bind(configuredClient) : value;
-    },
-  });
+  const client = createAgentClient();
   const skills = createSkillManager(config.agents.defaults.workspace);
   let credentials: CredentialsManager;
   try {
@@ -17256,7 +17242,7 @@ export async function createAgentManager(
         ...defaultModelChain,
         strategy: getModelStrategy(),
       });
-      const modelId = session.context.modelOverride || adaptiveModel;
+      const modelId = session.context.modelOverride || process.env.CLODDS_MODEL || (getAiProvider() === 'openrouter' ? defaultModelChain.primary : adaptiveModel);
       logger.info({ modelId, strategy: getModelStrategy() }, 'Selected model');
 
       let streamedResponseSent = false;
