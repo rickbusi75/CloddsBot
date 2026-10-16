@@ -1279,16 +1279,14 @@ async function cancelPolymarketOrder(auth: PolymarketApiKeyAuth, orderId: string
 }
 
 async function cancelAllPolymarketOrders(auth: PolymarketApiKeyAuth, marketId?: string): Promise<number> {
-  let url = `${POLY_CLOB_URL}/cancel-all`;
-  if (marketId) {
-    url += `?market=${marketId}`;
-  }
-
-  const headers = buildPolymarketHeadersForUrl(auth, 'DELETE', url);
+  const url = `${POLY_CLOB_URL}/${marketId ? 'cancel-market-orders' : 'cancel-all'}`;
+  const body = marketId ? { market: marketId } : undefined;
+  const headers = buildPolymarketHeadersForUrl(auth, 'DELETE', url, body);
 
   try {
     const response = await fetch(url, {
       method: 'DELETE',
+      body: body ? JSON.stringify(body) : undefined,
       headers: {
         ...headers,
         'Content-Type': 'application/json',
@@ -1300,8 +1298,8 @@ async function cancelAllPolymarketOrders(auth: PolymarketApiKeyAuth, marketId?: 
       return 0;
     }
 
-    const data = (await response.json()) as { canceled?: number };
-    const count = data.canceled || 0;
+    const data = (await response.json()) as { canceled?: string[] };
+    const count = data.canceled?.length || 0;
 
     logger.info({ count, marketId }, 'Cancelled Polymarket orders');
     return count;
@@ -1477,24 +1475,25 @@ async function cancelPolymarketOrdersBatch(
 }
 
 async function getPolymarketOpenOrders(auth: PolymarketApiKeyAuth): Promise<OpenOrder[]> {
-  const url = `${POLY_CLOB_URL}/orders?state=OPEN`;
-  const headers = buildPolymarketHeadersForUrl(auth, 'GET', url);
-
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      logger.error({ status: response.status }, 'Failed to fetch Polymarket orders');
-      return [];
-    }
-
-    const data = (await response.json()) as PolymarketOpenOrder[];
+    const data: PolymarketOpenOrder[] = [];
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    do {
+      const url = `${POLY_CLOB_URL}/data/orders${cursor ? `?next_cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const response = await fetch(url, { headers: buildPolymarketHeadersForUrl(auth, 'GET', url), signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error(`Polymarket orders HTTP ${response.status}`);
+      const page = await response.json() as PolymarketOpenOrder[] | { data: PolymarketOpenOrder[]; next_cursor?: string };
+      const rows = Array.isArray(page) ? page : page.data;
+      if (!Array.isArray(rows)) throw new Error('Invalid Polymarket orders response');
+      data.push(...rows);
+      cursor = Array.isArray(page) ? undefined : page.next_cursor;
+      if (cursor === 'LTE=') cursor = undefined;
+      if (cursor) {
+        if (seen.has(cursor) || seen.size >= 100) throw new Error('Incomplete Polymarket order pagination');
+        seen.add(cursor);
+      }
+    } while (cursor);
 
     return data.map((o) => ({
       orderId: o.id,
@@ -1513,7 +1512,7 @@ async function getPolymarketOpenOrders(auth: PolymarketApiKeyAuth): Promise<Open
     }));
   } catch (error) {
     logger.error({ error }, 'Error fetching Polymarket orders');
-    return [];
+    throw error;
   }
 }
 

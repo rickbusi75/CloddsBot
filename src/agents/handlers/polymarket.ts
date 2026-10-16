@@ -436,7 +436,7 @@ async function orderHandler(
   }
 
   return safeHandler(async () => {
-    const url = `https://clob.polymarket.com/order/${orderId}`;
+    const url = `https://clob.polymarket.com/data/order/${encodeURIComponent(orderId)}`;
     const response = await fetchClob(context, url);
     if (!response.ok) {
       const text = await response.text();
@@ -463,7 +463,7 @@ async function userOrdersHandler(
   const nextCursor = toolInput.next_cursor as string | undefined;
 
   return safeHandler(async () => {
-    let url = 'https://clob.polymarket.com/orders';
+    let url = 'https://clob.polymarket.com/data/orders';
     const params: string[] = [];
     if (market) params.push(`market=${market}`);
     if (asset_id) params.push(`asset_id=${asset_id}`);

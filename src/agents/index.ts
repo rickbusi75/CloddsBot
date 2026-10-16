@@ -11201,7 +11201,7 @@ async function executeTool(
       case 'polymarket_get_order': {
         try {
           const orderId = toolInput.order_id as string;
-          const url = `https://clob.polymarket.com/order/${orderId}`;
+          const url = `https://clob.polymarket.com/data/order/${encodeURIComponent(orderId)}`;
           const response = await fetchPolymarketClob(context, url);
           const data = await response.json() as ApiResponse;
           return JSON.stringify(data);

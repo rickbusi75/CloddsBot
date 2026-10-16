@@ -84,3 +84,24 @@ test('execution builds a Deposit Wallet order and authenticates creation, cancel
     assert.equal(creates, 1);
   } finally { service.stopHeartbeat(); }
 });
+
+test('open orders use authenticated paginated data routes, and market cancellation stays scoped', async () => {
+  const service = createExecutionService({ polymarket: { ...auth, privateKey, funderAddress: auth.address }, dryRun: false });
+  let pages = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (init?.method === 'DELETE') {
+      assert.equal(url.pathname, '/cancel-market-orders');
+      assert.deepEqual(JSON.parse(String(init.body)), { market: 'condition' });
+      return new Response(JSON.stringify({ canceled: ['one','two'] }));
+    }
+    assert.equal(url.pathname, '/data/orders');
+    pages++;
+    return new Response(JSON.stringify({ data: [], next_cursor: pages === 1 ? 'next-page' : 'LTE=' }));
+  };
+  try {
+    assert.deepEqual(await service.getOpenOrders('polymarket'), []);
+    assert.equal(pages, 2);
+    assert.equal(await service.cancelAllOrders('polymarket','condition'), 2);
+  } finally { service.stop(); }
+});
