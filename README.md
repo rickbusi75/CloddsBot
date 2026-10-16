@@ -1,3 +1,5 @@
+**Rick edition:** OpenRouter and ARM64 deployment adaptations. [Fork guide and upstream update procedure](docs/fork/README.md).
+
 <p align="center">
   <img src="https://cloddsbot.com/logo.png" alt="Clodds Logo" width="280">
 </p>

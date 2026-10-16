@@ -1,0 +1,35 @@
+name: Rick edition
+on:
+  push:
+    branches: [rick]
+  pull_request:
+    branches: [rick]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - name: OpenRouter contract tests (no credentials or paid requests)
+        run: node --test --import tsx tests/providers/openrouter.test.ts tests/unit/polymarket-gamma.test.ts tests/trading/futures-pre-trade.test.ts tests/execution/bracket-stop-trigger.test.ts
+      - run: npm run build
+      - name: Audit production dependencies
+        shell: bash
+        run: |
+          npm audit --omit=dev --json > audit.json || true
+          node -e "const a=require('./audit.json');if(!a.metadata)process.exit(1);const v=a.metadata.vulnerabilities;console.log(v);if(v.high)console.log('::warning::Production dependency audit still reports '+v.high+' high advisories.');if(v.critical)process.exit(1)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit
+          path: audit.json

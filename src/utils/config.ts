@@ -419,6 +419,7 @@ export async function loadConfig(customPath?: string): Promise<Config> {
 
   // Substitute environment variables
   const config = substituteEnvVars(merged) as Config;
+  if (process.env.CLODDS_MODEL?.trim()) config.agents.defaults.model.primary = process.env.CLODDS_MODEL.trim();
 
   // Apply Discord credentials from the same environment used by the CLI entrypoint.
   // Preserve file-provided channel settings while allowing env-only setup.

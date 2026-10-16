@@ -18,6 +18,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger';
 import Anthropic from '@anthropic-ai/sdk';
+import { createAgentClient, hasAiCredential } from '../providers/agent-client';
 
 // =============================================================================
 // TYPES
@@ -542,19 +543,18 @@ export function createSubagentManager(): SubagentManager {
 
     // Ensure we have a client
     if (!anthropicClient) {
-      const apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey) {
+      if (!hasAiCredential()) {
         state.status = 'failed';
         state.error = {
-          message: 'ANTHROPIC_API_KEY not set',
+          message: 'AI provider credential not set',
           category: 'auth',
           retryable: false,
         };
         saveSubagentState(state);
-        run.events.emit('error', new Error('ANTHROPIC_API_KEY not set'));
+        run.events.emit('error', new Error('AI provider credential not set'));
         return state;
       }
-      anthropicClient = new Anthropic({ apiKey });
+      anthropicClient = createAgentClient();
     }
 
     const model = state.config.model || 'claude-sonnet-4-6';

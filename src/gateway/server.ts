@@ -1,3 +1,4 @@
+import { listOpenRouterModels } from '../providers/agent-client';
 /**
  * HTTP + WebSocket server
  */
@@ -498,9 +499,12 @@ export function createServer(
 
   const ENV_VAR_SCHEMA = [
     {
-      category: 'Core',
+      category: 'AI',
       vars: [
-        { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API Key', secret: true, required: true, helpUrl: 'https://console.anthropic.com' },
+        { key: 'CLODDS_AI_PROVIDER', label: 'AI provider', secret: false, required: false },
+        { key: 'OPENROUTER_API_KEY', label: 'OpenRouter API Key', secret: true, required: false, helpUrl: 'https://openrouter.ai/keys' },
+        { key: 'CLODDS_MODEL', label: 'Model (provider/model for OpenRouter)', secret: false, required: false },
+        { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API Key (direct)', secret: true, required: false, helpUrl: 'https://console.anthropic.com' },
         { key: 'CLODDS_LOCALE', label: 'Language (en, es, zh, ja, ko...)', secret: false, required: false },
       ],
     },
@@ -616,6 +620,11 @@ export function createServer(
   const RESTART_KEYS = new Set(['TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
   const ALL_SCHEMA_KEYS = new Set(ENV_VAR_SCHEMA.flatMap(c => c.vars.map(v => v.key)));
 
+  app.get('/api/config/openrouter-models', requireAuth, async (_req, res) => {
+    try { res.json({ models: await listOpenRouterModels() }); }
+    catch { res.status(502).json({ error: 'OpenRouter catalog unavailable. You can still enter a model ID manually.' }); }
+  });
+
   app.get('/api/config/env', requireAuth, (_req, res) => {
     const schema = ENV_VAR_SCHEMA.map(cat => ({
       category: cat.category,
@@ -657,6 +666,12 @@ export function createServer(
       if (val.includes('\n') || val.includes('\r')) {
         res.status(400).json({ error: `Invalid value for ${key}: newlines not allowed` });
         return;
+      }
+      if (key === 'CLODDS_AI_PROVIDER' && !['anthropic', 'openrouter'].includes(val)) {
+        res.status(400).json({ error: 'AI provider must be anthropic or openrouter' }); return;
+      }
+      if (key === 'CLODDS_MODEL' && val && !/^~?[\w./:-]+$/.test(val)) {
+        res.status(400).json({ error: 'Invalid model ID' }); return;
       }
       if (RESTART_KEYS.has(key)) needsRestart = true;
     }
