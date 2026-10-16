@@ -1045,7 +1045,7 @@ export function createDefaultCommands(): CommandDefinition[] {
         };
 
         const resolved = aliases[requested.toLowerCase()] || requested;
-        if (!resolved.startsWith('claude-') && !/^[\w.:-]+\/[\w./:-]+$/.test(resolved)) {
+        if (!resolved.startsWith('claude-') && !/^~?[\w.:-]+\/[\w./:-]+$/.test(resolved)) {
           return 'Unknown model. Use a Claude alias or a full provider/model ID.';
         }
 

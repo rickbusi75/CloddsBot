@@ -670,7 +670,7 @@ export function createServer(
       if (key === 'CLODDS_AI_PROVIDER' && !['anthropic', 'openrouter'].includes(val)) {
         res.status(400).json({ error: 'AI provider must be anthropic or openrouter' }); return;
       }
-      if (key === 'CLODDS_MODEL' && val && !/^[\w./:-]+$/.test(val)) {
+      if (key === 'CLODDS_MODEL' && val && !/^~?[\w./:-]+$/.test(val)) {
         res.status(400).json({ error: 'Invalid model ID' }); return;
       }
       if (RESTART_KEYS.has(key)) needsRestart = true;

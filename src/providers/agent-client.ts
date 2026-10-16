@@ -18,7 +18,7 @@ export function resolveRequestModel(model: string, env: NodeJS.ProcessEnv = proc
   if (getAiProvider(env) === 'anthropic') return model.replace(/^anthropic\//, '');
   // Auxiliary tasks use the selected model when their built-in Claude ID is unqualified.
   const selected = model.includes('/') ? model : env.CLODDS_MODEL;
-  if (!selected || !/^[\w.:-]+\/[\w./:-]+$/.test(selected)) {
+  if (!selected || !/^~?[\w.:-]+\/[\w./:-]+$/.test(selected)) {
     throw new Error('Choose an OpenRouter model using its full provider/model ID in AI settings.');
   }
   return selected;

@@ -10,6 +10,7 @@ const reply = (content: unknown[] = [{ type: 'text', text: 'ok' }]) => ({
 
 test('OpenRouter preserves full model IDs and uses the selected model for auxiliary tasks', () => {
   assert.equal(resolveRequestModel('vendor/model:free', env()), 'vendor/model:free');
+  assert.equal(resolveRequestModel('~vendor/model-latest', env()), '~vendor/model-latest');
   assert.equal(resolveRequestModel('claude-hardcoded-aux', env()), env().CLODDS_MODEL);
   assert.equal(resolveRequestModel('anthropic/claude-test', { CLODDS_AI_PROVIDER: 'anthropic' }), 'claude-test');
   assert.throws(() => getAiProvider({ CLODDS_AI_PROVIDER: 'unknown' }));
