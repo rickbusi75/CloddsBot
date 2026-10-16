@@ -94,7 +94,7 @@ describe('Polymarket V2 order signer byte parity with ethers EIP-712', () => {
     assert.equal(result.order.signature.toLowerCase(), refSig.toLowerCase());
   });
 
-  it('defaults metadata/builder to 32 zero bytes and rejects POLY_1271', () => {
+  it('defaults metadata/builder to 32 zero bytes and requires a funder for POLY_1271', () => {
     const result = buildSignedOrderV2(
       { tokenId: '21742633143463906290569050155826241533067272736897614950488156847949938836455', price: 0.5, size: 100, side: 'buy' },
       { privateKey: TEST_PRIVATE_KEY }

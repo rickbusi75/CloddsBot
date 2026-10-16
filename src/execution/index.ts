@@ -23,6 +23,7 @@ import {
   buildSignedOrderV2,
   buildSignedOrdersV2,
   getCurrentPolymarketOrderVersion,
+  getPolymarketSigningDomain,
   type PostOrderBody,
   type PostOrderBodyV2,
   type SignerConfig,
@@ -647,20 +648,20 @@ export async function getPolymarketBalance(
 
   // Try CLOB /balance-allowance first (authenticated), fallback to on-chain USDC
   try {
-    const url = `${POLY_CLOB_URL}/balance-allowance?asset_type=USDC`;
+    const url = `${POLY_CLOB_URL}/balance-allowance?asset_type=COLLATERAL&signature_type=${auth.signatureType ?? 0}`;
     const headers = buildPolymarketHeadersForUrl(auth, 'GET', url);
     const response = await fetch(url, { headers });
     if (response.ok) {
-      const data = await response.json() as { balance?: string; allowance?: string };
+      const data = await response.json() as { balance?: string; allowance?: string; allowances?: Record<string, string> };
       const balance = parseFloat(data.balance || '0') / 1e6;
-      const allowance = parseFloat(data.allowance || '0') / 1e6;
-      if (balance > 0 || allowance > 0) return { balance, allowance };
+      const allowance = Math.max(0, ...Object.values(data.allowances || {}).map(a => Number(a) / 1e6), Number(data.allowance || 0) / 1e6);
+      return { balance, allowance };
     }
   } catch { /* fallback below */ }
 
   // Fallback: read USDC balance directly from Polygon chain
   try {
-    const USDC_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
+    const USDC_POLYGON = auth.signatureType === 3 ? '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB' : '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
     const paddedAddr = walletAddress.slice(2).toLowerCase().padStart(64, '0');
     const data = `0x70a08231${paddedAddr}`;
     const rpcResponse = await fetch('https://polygon-rpc.com/', {
@@ -675,7 +676,8 @@ export async function getPolymarketBalance(
     const rpcData = await rpcResponse.json() as { result?: string };
     const rawBalance = BigInt(rpcData.result || '0x0');
     const balance = Number(rawBalance) / 1e6;
-    return { balance, allowance: balance };
+    // A token balance does not prove that the exchange has spending approval.
+    return { balance, allowance: 0 };
   } catch (error) {
     logger.error({ error, walletAddress: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'unknown' }, 'Failed to fetch Polymarket balance');
     return { balance: 0, allowance: 0 };
@@ -1200,12 +1202,14 @@ async function placeSignedPolymarketOrder(
   // The live exchange currently defaults to V2 (GET /version), but isn't required to
   // stay that way — resolve per-order (cached 5 min) rather than hardcoding a version.
   const version = await getCurrentPolymarketOrderVersion(POLY_CLOB_URL);
+  if (version === 1 && auth.signatureType === 3) throw new Error('Deposit Wallet requires V2 order format');
+  const signingDomain = version === 2 ? await getPolymarketSigningDomain(tokenId, negRisk, POLY_CLOB_URL) : undefined;
   const postOrder: PostOrderBody | PostOrderBodyV2 = version === 1
     ? buildSignedOrder({
         tokenId, price, size, side: side === 'buy' ? 'buy' : 'sell', negRisk, feeRateBps, nonce: getNextNonce(),
       }, signerCfg)
     : buildSignedOrderV2({
-        tokenId, price, size, side: side === 'buy' ? 'buy' : 'sell', negRisk,
+        tokenId, price, size, side: side === 'buy' ? 'buy' : 'sell', negRisk, signingDomain,
       }, signerCfg); // feeRateBps has no V2 equivalent — fees are exchange-computed, not client-specified
 
   // Set owner to API key (required by Polymarket CLOB)
@@ -1226,7 +1230,7 @@ async function placeSignedPolymarketOrder(
       return { response: resp, data: json };
     });
 
-    if (!response.ok || data.errorMsg) {
+    if (!response.ok || data.success === false || data.errorMsg) {
       const { code, message } = parsePolymarketError(data.errorMsg, response.status);
       logger.error({ status: response.status, errorCode: code, error: message }, 'Polymarket signed order failed');
       return { success: false, error: `[${code}] ${message}` };
@@ -1234,7 +1238,8 @@ async function placeSignedPolymarketOrder(
 
     const orderId = data.orderID || data.order_id;
     logger.info({ orderId, tokenId, side, price, size, feeRateBps, version }, 'Polymarket signed order placed');
-    return { success: true, orderId, status: 'open', transactionHash: data.transactionsHashes?.[0] };
+    if (!orderId) return { success: false, error: 'Polymarket returned no order ID' };
+    return { success: true, orderId, status: data.status === 'matched' ? 'filled' : data.status === 'delayed' ? 'pending' : 'open', transactionHash: data.transactionsHashes?.[0] };
   } catch (error) {
     logger.error({ error }, 'Error placing Polymarket signed order after retries');
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -1242,19 +1247,22 @@ async function placeSignedPolymarketOrder(
 }
 
 async function cancelPolymarketOrder(auth: PolymarketApiKeyAuth, orderId: string): Promise<boolean> {
-  const url = `${POLY_CLOB_URL}/order/${orderId}`;
+  const url = `${POLY_CLOB_URL}/order`;
+  const body = { orderID: orderId };
 
   try {
-    const { response } = await polymarketRetryWithBackoff(async () => {
-      const headers = buildPolymarketHeadersForUrl(auth, 'DELETE', url);
+    const { response, data } = await polymarketRetryWithBackoff(async () => {
+      const headers = buildPolymarketHeadersForUrl(auth, 'DELETE', url, body);
       const resp = await fetch(url, {
         method: 'DELETE',
         headers: {
           ...headers,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify(body),
       });
-      return { response: resp, data: null };
+      const data = await resp.json() as { canceled?: string[]; not_canceled?: Record<string, string> };
+      return { response: resp, data };
     });
 
     if (!response.ok) {
@@ -1263,7 +1271,7 @@ async function cancelPolymarketOrder(auth: PolymarketApiKeyAuth, orderId: string
     }
 
     logger.info({ orderId }, 'Polymarket order cancelled');
-    return true;
+    return data.canceled?.includes(orderId) === true;
   } catch (error) {
     logger.error({ error, orderId }, 'Error cancelling Polymarket order after retries');
     return false;
@@ -1342,13 +1350,15 @@ async function placePolymarketOrdersBatch(
   };
 
   const version = await getCurrentPolymarketOrderVersion(POLY_CLOB_URL);
-  const orderParamsList = orders.map(o => ({
+  if (version === 1 && auth.signatureType === 3) throw new Error('Deposit Wallet requires V2 order format');
+  const orderParamsList = await Promise.all(orders.map(async o => ({
     tokenId: o.tokenId,
     price: o.price,
     size: o.size,
     side: o.side === 'buy' ? 'buy' as const : 'sell' as const,
     negRisk: o.negRisk,
-  }));
+    signingDomain: version === 2 ? await getPolymarketSigningDomain(o.tokenId, o.negRisk, POLY_CLOB_URL) : undefined,
+  })));
   const postOrders: Array<PostOrderBody | PostOrderBodyV2> = version === 1
     ? buildSignedOrders(orderParamsList, signerCfg)
     : buildSignedOrdersV2(orderParamsList, signerCfg);
@@ -2536,7 +2546,7 @@ async function getPolymarketOrderbooksBatch(
 // =============================================================================
 
 export function createExecutionService(config: ExecutionConfig): ExecutionService {
-  const maxOrderSize = config.maxOrderSize || 1000; // Default $1000 max
+  const maxOrderSize = config.maxOrderSize ?? 1000; // Preserve an explicit zero limit.
 
   // ==========================================================================
   // REAL-TIME FILL TRACKING (Polymarket WebSocket)
@@ -2676,15 +2686,15 @@ export function createExecutionService(config: ExecutionConfig): ExecutionServic
   let heartbeatId: string | null = null;
   let heartbeatInterval: NodeJS.Timeout | null = null;
   let heartbeatInProgress = false;
-  const HEARTBEAT_INTERVAL_MS = 8000; // 8s to be safe (10s timeout)
+  const HEARTBEAT_INTERVAL_MS = 5000;
 
   async function postHeartbeat(existingId?: string): Promise<string> {
     if (!config.polymarket) {
       throw new Error('Polymarket not configured');
     }
 
-    const url = `${POLY_CLOB_URL}/heartbeat`;
-    const body = existingId ? { heartbeat_id: existingId } : {};
+    const url = `${POLY_CLOB_URL}/v1/heartbeats`;
+    const body = { heartbeat_id: existingId || '' };
 
     const headers = buildPolymarketHeadersForUrl(
       {
@@ -2692,9 +2702,11 @@ export function createExecutionService(config: ExecutionConfig): ExecutionServic
         apiKey: config.polymarket.apiKey,
         apiSecret: config.polymarket.apiSecret,
         apiPassphrase: config.polymarket.apiPassphrase,
+        privateKey: config.polymarket.privateKey,
       },
       'POST',
-      url
+      url,
+      body
     );
 
     const response = await fetch(url, {

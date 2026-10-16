@@ -3,12 +3,15 @@
  */
 
 import { createHmac } from 'crypto';
+import { computeAddress } from 'ethers';
 
 export interface PolymarketApiKeyAuth {
   address: string;
   apiKey: string;
   apiSecret: string;
   apiPassphrase: string;
+  privateKey?: string;
+  signatureType?: number;
 }
 
 export function buildPolymarketHmacSignature(
@@ -38,7 +41,8 @@ export function buildPolymarketHeadersForUrl(
   timestampSeconds?: number
 ): Record<string, string> {
   const parsed = new URL(url);
-  const path = `${parsed.pathname}${parsed.search}`;
+  // CLOB signs the request path only; query parameters are not part of the HMAC.
+  const path = parsed.pathname;
   const timestamp = (timestampSeconds ?? Math.floor(Date.now() / 1000)).toString();
   const bodyString = typeof body === 'string'
     ? body
@@ -57,7 +61,7 @@ export function buildPolymarketHeadersForUrl(
   // CLOB authentication reference and both clob-client and clob-client-v2's headers/index.ts,
   // which pass these keys straight to axios with no name transformation.
   return {
-    'POLY_ADDRESS': auth.address,
+    'POLY_ADDRESS': auth.privateKey ? computeAddress(auth.privateKey) : auth.address,
     'POLY_API_KEY': auth.apiKey,
     'POLY_PASSPHRASE': auth.apiPassphrase,
     'POLY_TIMESTAMP': timestamp,

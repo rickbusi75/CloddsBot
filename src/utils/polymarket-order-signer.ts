@@ -41,6 +41,8 @@ export const NEG_RISK_CTF_EXCHANGE = '0xC5d563A36AE78145C45a50134d48A1215220f80a
 export const CTF_EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B';
 /** Neg Risk CTF Exchange V2 — verified live on Polygon */
 export const NEG_RISK_CTF_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59';
+/** Polymarket Protocol V2 position exchange (EIP-712 domain version 3). */
+export const POSITION_EXCHANGE = '0xe3333700cA9d93003F00f0F71f8515005F6c00Aa';
 
 /** Operator/taker address (Polymarket's operator) — V1 only, V2 has no taker field */
 const OPERATOR_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -61,9 +63,7 @@ const ORDER_TYPE_STRING =
 const ORDER_TYPE_STRING_V2 =
   'Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)';
 
-// Signature types (V1 supports EOA/POLY_PROXY/POLY_GNOSIS_SAFE; V2 adds POLY_1271 for
-// smart-contract wallets, which needs a different nested-signature scheme entirely and
-// is intentionally not implemented here — buildSignedOrderV2 throws if it's requested)
+// V2 Deposit Wallets use the nested TypedDataSign/ ERC-7739 envelope.
 export enum SignatureType {
   EOA = 0,
   POLY_PROXY = 1,
@@ -141,6 +141,8 @@ export interface OrderParams {
   metadata?: string;
   /** V2 only — bytes32 hex string, defaults to 32 zero bytes if omitted */
   builderCode?: string;
+  /** Resolved from this market's order book, never from the global /version. */
+  signingDomain?: { exchange: string; version: '2' | '3' };
 }
 
 export interface PolymarketOrderV2 {
@@ -383,13 +385,13 @@ function createTypedDataHash(contractAddress: string, order: PolymarketOrder): s
 // V2 domain — same 4-field EIP712Domain shape as V1, just a different version string
 // ("2"), so it gets its own hash rather than parametrizing hashDomain (keeps the
 // already-verified V1 path untouched).
-function hashDomainV2(contractAddress: string): string {
+function hashDomainV2(contractAddress: string, version: string = PROTOCOL_VERSION_V2): string {
   const typeHash = Buffer.from(keccak256(
     Buffer.from('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
   ), 'hex');
 
   const nameHash = Buffer.from(keccak256(Buffer.from(PROTOCOL_NAME)), 'hex');
-  const versionHash = Buffer.from(keccak256(Buffer.from(PROTOCOL_VERSION_V2)), 'hex');
+  const versionHash = Buffer.from(keccak256(Buffer.from(version)), 'hex');
   const chainIdHex = CHAIN_ID.toString(16).padStart(64, '0');
   const contractHex = contractAddress.slice(2).toLowerCase().padStart(64, '0');
 
@@ -432,8 +434,8 @@ function hashOrderV2(order: PolymarketOrderV2): string {
   return '0x' + keccak256(encoded);
 }
 
-function createTypedDataHashV2(contractAddress: string, order: PolymarketOrderV2): string {
-  const domainSeparator = hashDomainV2(contractAddress);
+function createTypedDataHashV2(contractAddress: string, order: PolymarketOrderV2, version = '2'): string {
+  const domainSeparator = hashDomainV2(contractAddress, version);
   const structHash = hashOrderV2(order);
 
   const encoded = Buffer.concat([
@@ -601,17 +603,15 @@ export function buildSignedOrderV2(
   validateOrderParams(params);
 
   const signatureType = signer.signatureType ?? (signer.funderAddress ? SignatureType.POLY_GNOSIS_SAFE : SignatureType.EOA);
-  if (signatureType === SignatureType.POLY_1271) {
-    throw new Error(
-      'POLY_1271 (smart-contract wallet) signing is not implemented — it requires a nested ' +
-      'TypedDataSign wrapper around the order, not a plain EIP-712 signature. Use EOA, ' +
-      'POLY_PROXY, or POLY_GNOSIS_SAFE instead.'
-    );
+  if (signatureType === SignatureType.POLY_1271 && !/^0x[0-9a-fA-F]{40}$/.test(signer.funderAddress || '')) {
+    throw new OrderValidationError('Deposit Wallet signing requires its funder address');
   }
 
   const signerAddress = deriveAddress(signer.privateKey);
   const maker = signer.funderAddress || signerAddress;
-  const exchange = params.negRisk ? NEG_RISK_CTF_EXCHANGE_V2 : CTF_EXCHANGE_V2;
+  const exchange = params.signingDomain?.exchange ?? (params.negRisk ? NEG_RISK_CTF_EXCHANGE_V2 : CTF_EXCHANGE_V2);
+  const domainVersion = params.signingDomain?.version ?? '2';
+  const orderSigner = signatureType === SignatureType.POLY_1271 ? maker : signerAddress;
 
   const { makerAmount, takerAmount } = getOrderAmounts(params.price, params.size, params.side);
   const salt = generateSalt();
@@ -623,7 +623,7 @@ export function buildSignedOrderV2(
   const order: PolymarketOrderV2 = {
     salt,
     maker,
-    signer: signerAddress,
+    signer: orderSigner,
     tokenId: params.tokenId,
     makerAmount,
     takerAmount,
@@ -634,14 +634,40 @@ export function buildSignedOrderV2(
     builder,
   };
 
-  const hash = createTypedDataHashV2(exchange, order);
-  const signature = signHash(hash, signer.privateKey);
+  let signature: string;
+  if (signatureType === SignatureType.POLY_1271) {
+    // ERC-7739: sign TypedDataSign(Order contents, wallet domain), then append
+    // the exchange domain, contents hash, contents type and its uint16 byte length.
+    const appDomain = hashDomainV2(exchange, domainVersion);
+    const contentsHash = hashOrderV2(order);
+    const nestedType = 'TypedDataSign(Order contents,string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)' + ORDER_TYPE_STRING_V2;
+    const nestedHash = keccak256(Buffer.concat([
+      Buffer.from(keccak256(Buffer.from(nestedType)), 'hex'),
+      Buffer.from(contentsHash.slice(2), 'hex'),
+      Buffer.from(keccak256(Buffer.from('DepositWallet')), 'hex'),
+      Buffer.from(keccak256(Buffer.from('1')), 'hex'),
+      Buffer.from(encodeUint256(CHAIN_ID), 'hex'),
+      Buffer.from(encodeAddress(maker), 'hex'),
+      Buffer.alloc(32),
+    ]));
+    const digest = '0x' + keccak256(Buffer.concat([
+      Buffer.from([0x19, 0x01]), Buffer.from(appDomain.slice(2), 'hex'), Buffer.from(nestedHash, 'hex'),
+    ]));
+    const description = Buffer.from(ORDER_TYPE_STRING_V2);
+    const length = Buffer.alloc(2); length.writeUInt16BE(description.length);
+    signature = '0x' + Buffer.concat([
+      Buffer.from(signHash(digest, signer.privateKey).slice(2), 'hex'),
+      Buffer.from(appDomain.slice(2), 'hex'), Buffer.from(contentsHash.slice(2), 'hex'), description, length,
+    ]).toString('hex');
+  } else {
+    signature = signHash(createTypedDataHashV2(exchange, order, domainVersion), signer.privateKey);
+  }
 
   return {
     order: {
       salt: parseInt(salt, 10),
       maker,
-      signer: signerAddress,
+      signer: orderSigner,
       tokenId: params.tokenId,
       makerAmount,
       takerAmount,
@@ -670,7 +696,19 @@ export function buildSignedOrdersV2(
 }
 
 function normalizeBytes32(value: string): string {
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(value)) throw new OrderValidationError('Expected a bytes32 value');
   return value.startsWith('0x') ? value : `0x${value}`;
+}
+
+/** Resolve the market protocol separately from the exchange's order format. */
+export async function getPolymarketSigningDomain(tokenId: string, negRisk = false, baseUrl = 'https://clob.polymarket.com'):
+  Promise<{ exchange: string; version: '2' | '3' }> {
+  const res = await fetch(`${baseUrl}/book?token_id=${encodeURIComponent(tokenId)}`, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Cannot resolve Polymarket market signing domain: HTTP ${res.status}`);
+  const book = await res.json() as { version?: string; neg_risk?: boolean };
+  if (book.version === 'v2') return { exchange: POSITION_EXCHANGE, version: '3' };
+  if (book.version != null && book.version !== 'v1') throw new Error('Unsupported Polymarket market version');
+  return { exchange: (book.neg_risk ?? negRisk) ? NEG_RISK_CTF_EXCHANGE_V2 : CTF_EXCHANGE_V2, version: '2' };
 }
 
 // =============================================================================

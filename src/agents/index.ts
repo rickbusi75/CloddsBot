@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createAgentClient, getAiProvider } from '../providers/agent-client';
 import { spawn, spawnSync, ChildProcess, execSync, execFileSync } from 'child_process';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { generateId as generateSecureId } from '../utils/id';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
@@ -358,6 +358,8 @@ function getPolymarketApiKeyAuth(creds: PolymarketCredentials): PolymarketApiKey
       apiKey: creds.apiKey,
       apiSecret: creds.apiSecret,
       apiPassphrase: creds.apiPassphrase,
+      privateKey: creds.privateKey,
+      signatureType: creds.signatureType,
     };
   }
   return null;
@@ -1165,7 +1167,7 @@ function buildTools(): ToolDefinition[] {
     },
     {
       name: 'polymarket_balance',
-      description: 'Get USDC balance on Polymarket (available funds for trading)',
+      description: 'Get Polymarket collateral balance (pUSD for Deposit Wallets) and spending allowance',
       input_schema: {
         type: 'object',
         properties: {},
@@ -10072,7 +10074,7 @@ async function executeTool(
       }
 
       case 'list_trading_credentials': {
-        const platforms = await context.credentials.listUserPlatforms(userId);
+        const platforms = [...new Set([...(await context.credentials.listUserPlatforms(userId)), ...(context.tradingContext?.credentials.keys() || [])])];
 
         if (platforms.length === 0) {
           return JSON.stringify({
@@ -10081,8 +10083,9 @@ async function executeTool(
         }
 
         return JSON.stringify({
-          result: `Trading enabled for: ${platforms.join(', ')}`,
+          result: `Credentials configured for: ${platforms.join(', ')}`,
           platforms,
+          dryRun: context.tradingContext?.dryRun ?? true,
         });
       }
 
@@ -10347,8 +10350,8 @@ async function executeTool(
           const { getPolymarketBalance } = await import('../execution');
           const { balance, allowance } = await getPolymarketBalance(auth);
           return JSON.stringify({
-            balance: `$${balance.toFixed(2)} USDC`,
-            allowance: `$${allowance.toFixed(2)} USDC`,
+            balance: `$${balance.toFixed(2)} collateral`,
+            allowance: `$${allowance.toFixed(2)} collateral`,
             raw: { balance, allowance },
           });
         } catch (err: unknown) {
@@ -16959,6 +16962,8 @@ export async function createAgentManager(
   executionService?: ExecutionServiceRef | null
 ): Promise<AgentManager> {
   const client = createAgentClient();
+  let operatorExecutionService: import('../execution/index.js').ExecutionService | null = null;
+  let operatorExecutionFingerprint = '';
   const skills = createSkillManager(config.agents.defaults.workspace);
   let credentials: CredentialsManager;
   try {
@@ -17149,10 +17154,27 @@ export async function createAgentManager(
     const processedMessage = beforeMsgCtx.message || message;
 
     // Build trading context for this user (per-user credentials)
-    const tradingContext = await credentials.buildTradingContext(session.userId, session.key);
+    const allowEnvironment = processedMessage.platform === 'webchat'
+      && process.env.CLODDS_ENV_TRADING_WEBCHAT === 'true'
+      && Boolean(config.channels.webchat?.authToken);
+    const tradingContext = await credentials.buildTradingContext(session.userId, session.key, allowEnvironment);
     // Add execution service if available
     if (executionService) {
       tradingContext.executionService = executionService;
+    } else if (allowEnvironment) {
+      const poly = tradingContext.credentials.get('polymarket');
+      if (poly?.platform === 'polymarket') {
+        const { createExecutionService } = await import('../execution/index.js');
+        const executionConfig = { polymarket: { ...poly.data, address: poly.data.funderAddress },
+          dryRun: tradingContext.dryRun, maxOrderSize: tradingContext.maxOrderSize };
+        const fingerprint = createHash('sha256').update(JSON.stringify(executionConfig)).digest('hex');
+        if (!operatorExecutionService || fingerprint !== operatorExecutionFingerprint) {
+          operatorExecutionService?.stop();
+          operatorExecutionService = createExecutionService(executionConfig);
+          operatorExecutionFingerprint = fingerprint;
+        }
+        tradingContext.executionService = operatorExecutionService;
+      }
     }
 
     // Helper to add to conversation history
@@ -17419,6 +17441,7 @@ export async function createAgentManager(
 
       // Build dynamic context (skills + memory) — changes every query, not cached
       let dynamicContext = '';
+      dynamicContext += `\n## Current trading configuration\nConfigured platforms: ${[...tradingContext.credentials.keys()].join(', ') || 'none'}. Mode: ${tradingContext.dryRun ? 'simulation' : 'live'}. Maximum single order: $${tradingContext.maxOrderSize}. Configuration does not prove an API connection; call the read-only balance/health tools to verify. Never ask for keys in chat when settings are configured. Hyperliquid spot balances and perpetual margin are separate.\n`;
       if (skillContext) {
         dynamicContext += `\n## Skills Reference\n${skillContext}`;
       }

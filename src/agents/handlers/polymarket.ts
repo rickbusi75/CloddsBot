@@ -37,6 +37,8 @@ function getPolyCreds(context: HandlerContext): PolymarketApiKeyAuth | null {
     apiKey: creds.apiKey,
     apiSecret: creds.apiSecret,
     apiPassphrase: creds.apiPassphrase,
+    privateKey: creds.privateKey,
+    signatureType: creds.signatureType,
   };
 }
 
@@ -492,27 +494,14 @@ async function balancesHandler(
   const address = (toolInput.address as string) || creds.address;
 
   return safeHandler(async () => {
-    // Fetch USDC balance
-    const balanceUrl = `https://clob.polymarket.com/balance?address=${address}`;
-    const balanceResponse = await fetchClob(context, balanceUrl);
-    let balanceData: { balance?: string; allowance?: string } = {};
-    if (balanceResponse.ok) {
-      balanceData = await balanceResponse.json() as { balance?: string; allowance?: string };
-    } else {
-      logger.warn(`Failed to fetch Polymarket balance: HTTP ${balanceResponse.status} ${balanceResponse.statusText}`);
-    }
-
-    // Fetch positions
-    const positionsUrl = `https://clob.polymarket.com/positions?address=${address}`;
-    const positionsResponse = await fetchClob(context, positionsUrl);
-    const positionsData = positionsResponse.ok ? await positionsResponse.json() as unknown[] : [];
+    const { getPolymarketBalance, getPolymarketPositions } = await import('../../execution/index.js');
+    const [balanceData, positionsData] = await Promise.all([
+      getPolymarketBalance(creds, address), getPolymarketPositions(creds, address),
+    ]);
 
     return {
       address,
-      usdc: {
-        balance: parseFloat((balanceData as { balance?: string }).balance || '0'),
-        allowance: parseFloat((balanceData as { allowance?: string }).allowance || '0'),
-      },
+      collateral: { ...balanceData, token: creds.signatureType === 3 ? 'pUSD' : 'USDC' },
       positions: positionsData,
     };
   });

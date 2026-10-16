@@ -211,7 +211,7 @@ export async function getAllMids(): Promise<Record<string, string>> {
 }
 
 export async function getOrderbook(coin: string): Promise<Orderbook> {
-  const data = await httpRequest<{ levels: [[string, string, number][], [string, string, number][]] }>('/info', {
+  const data = await httpRequest<{ levels: [Array<{ px: string; sz: string; n: number }>, Array<{ px: string; sz: string; n: number }>] }>('/info', {
     type: 'l2Book',
     coin,
   });
@@ -219,8 +219,8 @@ export async function getOrderbook(coin: string): Promise<Orderbook> {
   return {
     coin,
     levels: [
-      data.levels[0].map(([px, sz, n]) => ({ price: parseFloat(px), size: parseFloat(sz), numOrders: n })),
-      data.levels[1].map(([px, sz, n]) => ({ price: parseFloat(px), size: parseFloat(sz), numOrders: n })),
+      data.levels[0].map(({ px, sz, n }) => ({ price: parseFloat(px), size: parseFloat(sz), numOrders: n })),
+      data.levels[1].map(({ px, sz, n }) => ({ price: parseFloat(px), size: parseFloat(sz), numOrders: n })),
     ],
     time: Date.now(),
   };

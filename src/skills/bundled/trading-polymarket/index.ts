@@ -80,6 +80,7 @@ function getExecution(): ExecutionService | null {
           signatureType: (() => { const n = process.env.POLY_SIGNATURE_TYPE ? Number(process.env.POLY_SIGNATURE_TYPE) : undefined; return n !== undefined && Number.isNaN(n) ? undefined : n; })(),
         },
         dryRun: process.env.DRY_RUN === 'true',
+        maxOrderSize: Number(process.env.CLODDS_MAX_ORDER_USD || 1000),
       });
     } catch {
       return null;
@@ -584,7 +585,8 @@ async function handleBalance(): Promise<string> {
     const apiPassphrase = process.env.POLY_API_PASSPHRASE;
 
     if (apiKey && apiSecret && apiPassphrase) {
-      const auth = { apiKey, apiSecret, apiPassphrase, address: funderAddress };
+      const auth = { apiKey, apiSecret, apiPassphrase, address: funderAddress,
+        privateKey: process.env.POLY_PRIVATE_KEY, signatureType: Number(process.env.POLY_SIGNATURE_TYPE || 0) };
       const [balanceData, positions] = await Promise.all([
         getPolymarketBalance(auth, funderAddress),
         getPolymarketPositions(auth, funderAddress),
@@ -594,7 +596,7 @@ async function handleBalance(): Promise<string> {
         '**Polymarket Balance**',
         '',
         `Wallet: ${funderAddress.slice(0, 6)}...${funderAddress.slice(-4)}`,
-        `USDC: $${formatNumber(balanceData.balance)}`,
+        `Collateral: $${formatNumber(balanceData.balance)}`,
         `Allowance: $${formatNumber(balanceData.allowance)}`,
       ];
 
@@ -1305,7 +1307,8 @@ async function execute(args: string): Promise<string> {
 
         try {
           const { getPolymarketTrades } = await import('../../../execution/index');
-          const auth = { apiKey, apiSecret, apiPassphrase, address: process.env.POLY_FUNDER_ADDRESS || '' };
+          const auth = { apiKey, apiSecret, apiPassphrase, address: process.env.POLY_FUNDER_ADDRESS || '',
+            privateKey: process.env.POLY_PRIVATE_KEY, signatureType: Number(process.env.POLY_SIGNATURE_TYPE || 0) };
           const trades = await getPolymarketTrades(auth, limit);
 
           if (trades.length === 0) {
