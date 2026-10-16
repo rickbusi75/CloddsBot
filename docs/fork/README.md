@@ -31,6 +31,7 @@ Tests mock network responses and credentials, including tool round trips and nat
 Work in a development checkout, never in the live container or with production wallet credentials:
 
 ```bash
+git remote add upstream https://github.com/alsk1992/CloddsBot.git # once per fresh clone
 git fetch upstream
 git switch main
 git merge --ff-only upstream/main
@@ -53,3 +54,6 @@ npm run build
 ```
 
 The original upstream CI/security workflows remain available. The fork's focused checks run for feature PRs into `rick` and include regression tests for adapted features. Known upstream dependency advisories are documented separately; a successful feature check does not mean a clean security audit.
+Run deploy/oracle/render.sh on the VPS to render root Compose files from the versioned templates. Keep the previous rendered files for rollback.
+
+Selected fixes retain their upstream authors: degan6 Gamma research/lookup, Tong-bit-art futures market valuation (PR #128), banned2054 cancelled-stop race (PR #129). These fixes do not constitute complete financial validation.

@@ -1,9 +1,9 @@
 name: cloddsbot
 services:
   bot:
-    image: lab/cloddsbot:1.9.1-c930628
+    image: lab/cloddsbot:rick-20261016.1
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile.lab
     init: true
     env_file: /srv/lab/config/cloddsbot/bot.env

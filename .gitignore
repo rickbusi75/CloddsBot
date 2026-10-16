@@ -85,3 +85,8 @@ CLAWDBOT_ARCHITECTURE.md
 # Standalone compute API server (monetization layer — hosted only)
 src/api/
 .vercel
+
+# Rendered deployment files; templates are versioned under deploy/oracle.
+/compose.direct.yaml
+/compose.vpn.yaml
+
