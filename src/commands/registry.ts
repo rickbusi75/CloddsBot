@@ -1030,7 +1030,7 @@ export function createDefaultCommands(): CommandDefinition[] {
           ctx.session.context.modelOverride || ctx.session.context.model || defaultModel;
 
         if (!args) {
-          return ['Current Model', currentModel, '', 'Usage: /model sonnet'].join('\n');
+          return ['Current Model', currentModel, '', 'Usage: /model provider/model (OpenRouter) or /model sonnet (Anthropic)'].join('\n');
         }
 
         const requested = args.trim();
@@ -1044,7 +1044,7 @@ export function createDefaultCommands(): CommandDefinition[] {
           'haiku4.5': 'claude-haiku-4-5-20251001',
         };
 
-        const resolved = aliases[requested] || requested;
+        const resolved = aliases[requested.toLowerCase()] || requested;
         if (!resolved.startsWith('claude-') && !/^[\w.:-]+\/[\w./:-]+$/.test(resolved)) {
           return 'Unknown model. Use a Claude alias or a full provider/model ID.';
         }
