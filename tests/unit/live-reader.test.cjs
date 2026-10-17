@@ -32,12 +32,23 @@ test('account preflight is exhaustive, authenticated, read-only and does not inf
   const s=reader();const account=await s.client.account();
   assert.equal(account.cash,20.284834);assert.equal(account.allowance,100);
   assert.equal(account.positions.length,0);assert.equal(account.orders.length,0);assert(account.exhaustive);
+  assert.match(account.identity,/^[a-f0-9]{64}$/);
   for(const call of s.calls) {
     if(new URL(call.url).hostname==='clob.polymarket.com')assert.equal(call.init.headers['X-Test-Auth'],'test-only');
     else assert.deepEqual(call.init.headers,{});
   }
   const broken=reader({'/balance-allowance':{balance:'20284834'}});
   await assert.rejects(broken.client.account(),/allowance/);
+});
+
+test('wallet identity changes with the funder and signature type, but not API credential rotation',async()=>{
+  const s=reader(),base=(await s.client.account()).identity;
+  s.client.auth={...auth,apiKey:'rotated-public-test-key'};
+  assert.equal((await s.client.account()).identity,base);
+  s.client.auth={...auth,address:'0x'+'a'.repeat(40)};
+  assert.notEqual((await s.client.account()).identity,base);
+  s.client.auth={...auth,signatureType:0};
+  assert.notEqual((await s.client.account()).identity,base);
 });
 test('endpoint or redirect policy prevents leaking authentication',async()=>{
   const s=reader();
@@ -91,6 +102,7 @@ test('preview validates V2 token identity, fees, tick and executable size with n
   assert.equal(preview.mode,'PREVIEW_ONLY');assert.equal(preview.ordersSubmitted,0);
   assert.equal(preview.plan.feeRate,.04);assert.match(preview.approval,/^[a-f0-9]{64}$/);
   assert.equal(preview.plan.market,condition);
+  assert.equal(preview.outcomeLabel,'Yes');
   assert.equal(preview.protocol.version,'v2');
   assert(s.calls.every(c=>c.init.method==='GET'));
   await assert.rejects(s.client.preview({gammaId:'market',token:'legacy',side:'BUY',price:.2,shares:6}),/asset protocol/);

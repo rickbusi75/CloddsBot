@@ -13,7 +13,7 @@ function fixture(t,reply) {
   t.after(()=>{ledger.close();rmSync(dir,{recursive:true,force:true});});
   const auth={address:'0x'+'1'.repeat(40),apiKey:'unit-test-only',signatureType:3};
   const owner={kind:'human-owner',id:'test-owner'};
-  let account={at:new Date(now).toISOString(),cash:20.284834,allowance:100,geoblock:{blocked:false,country:'ES'},
+  let account={at:new Date(now).toISOString(),identity:'c'.repeat(64),cash:20.284834,allowance:100,geoblock:{blocked:false,country:'ES'},
     positions:[],orders:[],trades:[],exhaustive:true};
   const plan={market:'0x'+'2'.repeat(64),event:'event',token:'123',side:'BUY',price:.2,shares:6,feeRate:.04,
     strategy:'explicit-human-test',rulesHash:'a'.repeat(64),expiresAt:new Date(now+60000).toISOString()};
@@ -118,6 +118,15 @@ test('cancellation acknowledgement alone never releases risk; final no-fill proo
   s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'CANCELED',size_matched:'0'});
   assert.equal((await s.transport.reconcile(r.intent)).state,'CANCELLED');
   assert.equal(s.ledger.summary().pending,0);
+});
+
+test('a FOK automatically cancelled without a fill releases risk only after authenticated final evidence',async t=>{
+  const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
+  s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'CANCELED',size_matched:'0'});
+  s.setAccount({trades:[{id:'failed-attempt',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'FAILED',shares:6,price:.2}]});
+  assert.equal((await s.transport.reconcile(r.intent)).state,'CANCELLED');
+  assert.equal(s.calls.length,1);assert.equal(s.ledger.summary().pending,0);
+  s.ledger.checkAccount(s.account());
 });
 test('fill arriving during cancellation is reconciled as a fill, never discarded',async t=>{
   const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);

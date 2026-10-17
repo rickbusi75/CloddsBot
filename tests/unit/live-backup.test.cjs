@@ -13,7 +13,7 @@ function fixture(t) {
   const now=Date.parse('2026-10-17T12:00:00Z');
   const source=join(root,'data/cloddsbot/autonomy/live.sqlite');
   const ledger=new LiveLedger(source,()=>now);
-  const account={at:new Date(now).toISOString(),cash:20.284834,allowance:100,positions:[],orders:[],trades:[],exhaustive:true,geoblock:{blocked:false,country:'ES'}};
+  const account={at:new Date(now).toISOString(),identity:'c'.repeat(64),cash:20.284834,allowance:100,positions:[],orders:[],trades:[],exhaustive:true,geoblock:{blocked:false,country:'ES'}};
   ledger.activate(account,{kind:'human-owner',id:'unit-test-only'});
   const plan={market:'market',event:'event',token:'token',side:'BUY',price:.2,shares:6,feeRate:.04,
     strategy:'explicit-human-test',rulesHash:'a'.repeat(64),expiresAt:new Date(now+60000).toISOString()};

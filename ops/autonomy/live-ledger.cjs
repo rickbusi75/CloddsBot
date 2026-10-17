@@ -21,6 +21,7 @@ function planHash(plan) {
 function validateAccount(account, now) {
   if (!account || !Array.isArray(account.positions) || !Array.isArray(account.orders)
     || !Array.isArray(account.trades) || account.exhaustive !== true) throw Error('Account exposure unknown');
+  if(!/^[0-9a-f]{64}$/.test(account.identity||''))throw Error('Account identity unavailable');
   const at = Date.parse(account.at);
   if (!Number.isFinite(at) || now-at > 15000 || now-at < -2000) throw Error('Stale account snapshot');
   if (account.geoblock?.blocked !== false || account.geoblock?.country !== 'ES') throw Error('Geographic check failed');
@@ -62,6 +63,12 @@ function worstCost(plan) {
 }
 
 class LiveLedger {
+  static openReadOnly(file,now=()=>Date.now()) {
+    const ledger=Object.create(LiveLedger.prototype);
+    ledger.db=new Sqlite(file,{readonly:true,fileMustExist:true,timeout:2000});
+    ledger.now=now;
+    return ledger;
+  }
   constructor(file, now=()=>Date.now()) {
     mkdirSync(dirname(file),{recursive:true,mode:0o700});
     this.db=new Sqlite(file,{timeout:30000});
@@ -97,6 +104,7 @@ class LiveLedger {
     this.db.transaction(()=>{
       if(this.get('baseline')!==undefined) throw Error('An existing live ledger cannot be reset');
       this.put('baseline',account.cash); this.put('lastCash',account.cash);
+      this.put('accountIdentity',account.identity);
       this.put('baselineTrades',account.trades.map(t=>t.id).sort());
       this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.put('mode','manual'); this.put('limits',STARTER); this.put('actor',actor.id);
@@ -124,6 +132,9 @@ class LiveLedger {
     for(const [id,value] of Object.entries(prior))if(current[id]!==value)throw Error('Historical trade changed or missing');
     for(const t of account.trades)if(!Object.hasOwn(prior,t.id)&&t.orderId!==allowedOrderId)throw Error('Untracked account trade');
   }
+  checkIdentity(account) {
+    if(account.identity!==this.get('accountIdentity'))throw Error('Live ledger belongs to a different account');
+  }
   checkInventory(account,changedToken=null) {
     const knownOrders=new Set(this.db.prepare('SELECT order_id FROM live_intents WHERE order_id IS NOT NULL').all().map(r=>r.order_id));
     if(account.orders.some(o=>!knownOrders.has(o.id))) throw Error('Untracked open order');
@@ -135,6 +146,7 @@ class LiveLedger {
   }
   checkAccount(account) {
     validateAccount(account,this.now());
+    this.checkIdentity(account);
     this.checkTradeHistory(account);this.checkInventory(account);
     if(Math.abs(account.cash-this.get('lastCash',account.cash))>.00002) throw Error('Cash reconciliation required');
   }
@@ -244,16 +256,19 @@ class LiveLedger {
     validateAccount(account,this.now());
     this.db.transaction(()=>{
       const row=this.db.prepare('SELECT * FROM live_intents WHERE id=?').get(id);
-      if(!row||!['CANCEL_PENDING','UNKNOWN'].includes(row.state)||proof.orderId!==row.order_id||proof.authenticated!==true
+      if(!row||!['OPEN','CANCEL_PENDING','UNKNOWN'].includes(row.state)||proof.orderId!==row.order_id||proof.authenticated!==true
         ||proof.status!=='CANCELED'||proof.sizeMatched!==0)throw Error('Cancellation not verified');
       if(account.orders.some(o=>o.id===row.order_id)||account.trades.some(t=>t.orderId===row.order_id&&t.status!=='FAILED'))throw Error('Cancellation raced with a fill');
-      this.checkAccount(account);
+      this.checkIdentity(account);this.checkTradeHistory(account,row.order_id);this.checkInventory(account);
+      if(Math.abs(account.cash-this.get('lastCash'))>.00002)throw Error('Cash reconciliation required');
+      this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.db.prepare("UPDATE live_intents SET state='CANCELLED',finished_at=? WHERE id=?").run(new Date(this.now()).toISOString(),id);
       this.event(id,'CANCEL_CONFIRMED_NO_FILL');
     }).immediate();
   }
   reconcileFill(id,proof,account) {
     validateAccount(account,this.now());
+    this.checkIdentity(account);
     finite(proof.shares,'filled shares',.000001); finite(proof.cash,'fill cash',.000001);
     if(proof.final!==true || proof.authenticated!==true || proof.accountReflected!==true) throw Error('Fill not confirmed and reflected');
     return this.db.transaction(()=>{

@@ -14,7 +14,9 @@ implicitly substituted for these pUSD bounds or activated by depositing funds.
 
 `live-ledger.cjs` stores intentions and state transitions in a separate private
 SQLite file. Activation needs an explicit authenticated owner action and a flat,
-freshly checked account. No activation entry point is installed by this change.
+freshly checked account. The ledger is bound to the funder, chain and signature
+type; changing wallets cannot reuse an old balance baseline. No activation entry
+point is installed on the running VPS by this change.
 Each submission needs the exact plan digest, including asset, side, price,
 quantity, fee schedule, resolution-rule hash and expiry. A timeout retains its
 reservation, halts entries and cannot trigger another POST. Restart cannot reset
@@ -48,14 +50,40 @@ unsupported precision is rejected rather than silently rounded. Fees withheld
 from received shares are recorded as actual net inventory. Small residual shares
 must remain tracked; they must not be described as an empty account.
 
-The only CLI supplied here is **read only**:
+The existing account-check CLI is **read only**:
 
     node /app/ops/autonomy/live-check.cjs
 
 It does not open a live ledger, activate a mode, create a signature, approve tokens,
 send an order, redeem, transfer, or change private configuration. It reports a
-filtered account snapshot. Signing/submission classes are library code; only
-isolated fixtures and a public dummy key have exercised them so far.
+filtered account snapshot. Only isolated fixtures and a public dummy key have
+exercised the signing/submission methods so far.
+
+`live-operator.cjs` adds a separate **uninstalled manual-console prototype**.
+`check`, `status` and `preview` perform only GET requests; status opens an existing
+ledger read-only and never initializes one. The preview shows the exact outcome,
+resolution rules, cost and expiring plan hash. `activate`, `trade`, `cancel` and
+`resume` require an interactive terminal and a distinct exact confirmation;
+there is no `--yes` or piped-approval option. Activation does not submit an order
+or change the native bot's simulation flags. Do not register this CLI as a model
+tool, scheduled job, Telegram action or HTTP endpoint.
+
+These terminal checks prevent accidental unattended invocation; they do not
+authenticate a human cryptographically. Private SSH access and filesystem
+ownership remain the trust boundary. A trusted process able to impersonate the
+owner can bypass application prompts, so terminal presence is not a security
+claim against that owner. The assistant must not invoke financial commands with
+real credentials or an actual funded account.
+
+Mutating operator sessions use a Linux kernel `flock` on a retained file
+descriptor. A second session fails closed; process death releases the lock
+without deleting a potentially shared lock file. Unsupported platforms or a
+missing lock utility are rejected. `stop` remains available during another
+session's confirmation and halts new entries without releasing reservations or
+claiming existing orders were cancelled. `reconcile` uses GET requests and local
+accounting only. Recovery never repeats a submission. An exchange-cancelled FOK
+order can release its reservation only after authoritative no-fill, trade,
+inventory and cash checks agree.
 
 The snapshot helper can now atomically back up both observer.sqlite and live.sqlite
 when present. Tests restore a ledger with an outstanding WAL-backed submission,
@@ -63,14 +91,16 @@ verify that it stays reserved/unknown after restart, and preserve the previous
 good dump when a source is corrupt. Installing the updated helper and excluding
 the active live.sqlite/WAL from the host archive still belong to deployment.
 
-Before adding operator controls or enabling an execution service, finish and
+Before installing the operator prototype or enabling an execution service, finish and
 review: installation of the separate ledger backup, authoritative handling
 of outside cashflows and maker trades, source/strategy validation, settlement and
 Deposit Wallet redemption, account-latency and real-exchange tests, exposure and
 currency checks, emergency cancellation and notifications. Actual activation and
 real-money transactions remain actions for the human operator.
 
-Current isolated ARM64 coverage: 46 tests, including an abrupt SIGKILL with an
+Current isolated ARM64 coverage: 57 tests, including wallet changes, overlapping
+operator sessions, interruption during confirmation, immutable read-only status,
+and kernel-lock release after abrupt SIGKILL. Coverage also includes an abrupt SIGKILL with an
 outstanding SENDING record, recovery without replay, and simulated purchase/exit
 with a deposit that must not be recorded as profit. These tests use no real keys
 or network requests and do not validate exchange execution or profitability.
@@ -83,3 +113,4 @@ Primary protocol references:
 - https://docs.polymarket.com/market-data/market-details
 - https://docs.polymarket.com/trading/fees
 - https://docs.polymarket.com/api-reference/geoblock
+- https://man7.org/linux/man-pages/man2/flock.2.html

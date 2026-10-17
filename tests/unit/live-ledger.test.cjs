@@ -13,7 +13,7 @@ function setup(t) {
   const file=join(dir,'live.sqlite');
   const ledger=new LiveLedger(file,()=>instant);
   t.after(()=>{try{ledger.close();}catch{}rmSync(dir,{recursive:true,force:true});});
-  const account=()=>({at:new Date(instant).toISOString(),cash:20.284834,allowance:100,
+  const account=()=>({at:new Date(instant).toISOString(),identity:'c'.repeat(64),cash:20.284834,allowance:100,
     positions:[],orders:[],trades:[],exhaustive:true,geoblock:{blocked:false,country:'ES'}});
   const plan=(extra={})=>({market:'market',event:'event',token:'token',side:'BUY',price:.2,shares:6,feeRate:.04,
     strategy:'explicit-human-test',rulesHash:'a'.repeat(64),expiresAt:new Date(instant+60000).toISOString(),...extra});
@@ -43,6 +43,15 @@ test('historical trades are immutable across activation and a flat-account round
   assert.throws(()=>s.ledger.checkAccount({...account,trades:[{...trade,price:.3}]}),/Historical trade/);
   assert.throws(()=>s.ledger.checkAccount({...account,trades:[trade,{...trade,id:'new',orderId:'outside'}]}),/Untracked account trade/);
   assert.equal(s.ledger.summary().realized,0);
+});
+
+test('an activated ledger cannot be reused with a different wallet even when balances match',t=>{
+  const s=setup(t);s.activate();const p=s.plan();
+  assert.throws(()=>s.ledger.reserve(p,{...s.account(),identity:'d'.repeat(64)},planHash(p)),/different account/);
+  assert.equal(s.ledger.summary().pending,0);
+  const ro=LiveLedger.openReadOnly(s.file,()=>Date.parse(s.account().at));
+  try{assert.deepEqual(ro.summary(),s.ledger.summary());assert.throws(()=>ro.halt(),/readonly/);}
+  finally{ro.close();}
 });
 test('unknown, stale, geographically restricted or non-flat account cannot activate',t=>{
   const s=setup(t);

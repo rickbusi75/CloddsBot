@@ -99,6 +99,8 @@ class LiveTransport {
   }
   async cancel(id,actor) {
     this.checkActor(actor);
+    const account=await this.reader.account();
+    validateAccount(account,this.ledger.now());this.ledger.checkIdentity(account);
     const row=this.ledger.db.prepare('SELECT * FROM live_intents WHERE id=?').get(id);
     if(!row?.order_id)throw Error('Unknown owned order');
     this.ledger.cancelRequested(id);
@@ -121,6 +123,7 @@ class LiveTransport {
     if(!Number.isFinite(matched)||matched<0||matched>row.shares+.000001)throw Error('Invalid matched quantity');
     const account=await this.reader.account();
     validateAccount(account,this.ledger.now());
+    this.ledger.checkIdentity(account);
     this.ledger.checkTradeHistory(account,row.order_id);
     this.ledger.checkInventory(account,row.token);
     if(account.orders.some(o=>o.id===row.order_id))return {intent:id,state:'OPEN',matched};

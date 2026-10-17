@@ -96,7 +96,8 @@ class PolymarketReader {
         traderSide:t.trader_side,transactionHash:t.transaction_hash||null,
         shares:number(t.size,'trade size',.000001),price:number(t.price,'trade price',.000001,.999999)};
     });
-    return validateAccount({at,cash:number(balance.balance,'collateral')/1e6,
+    const identity=createHash('sha256').update('polymarket:137:'+this.auth.signatureType+':'+this.auth.address.toLowerCase()).digest('hex');
+    return validateAccount({at,identity,cash:number(balance.balance,'collateral')/1e6,
       allowance:Math.max(...allowanceValues.map(v=>number(v,'allowance')))/1e6,
       geoblock,orders:normalizedOrders,trades:normalizedTrades,positions:normalizedPositions,exhaustive:true},this.now());
   }
@@ -107,7 +108,8 @@ class PolymarketReader {
     if(typeof market.question!=='string'||typeof market.description!=='string'||market.description.length<40
       ||!Number.isFinite(Date.parse(market.endDate))||Date.parse(market.endDate)<=this.now())throw Error('Resolution rules or cutoff unavailable');
     const outcomes=array(market.outcomes);
-    if(!Array.isArray(outcomes)||outcomes.length!==2||new Set(outcomes).size!==2)throw Error('Binary market required');
+    if(!Array.isArray(outcomes)||outcomes.length!==2||new Set(outcomes).size!==2
+      ||outcomes.some(v=>typeof v!=='string'||!v.trim()))throw Error('Binary market required');
     const ids=market.version==='v2'?market.positionIds:market.version==='v1'||market.version==null?array(market.clobTokenIds):null;
     if(!Array.isArray(ids)||ids.length!==2||new Set(ids).size!==2||!ids.includes(request.token))throw Error('Unsupported asset protocol');
     if(!/^0x[0-9a-fA-F]{64}$/.test(market.conditionId))throw Error('Market condition missing');
@@ -133,7 +135,7 @@ class PolymarketReader {
     if(remaining>1e-6)throw Error('Insufficient executable depth');
     if(plan.side==='BUY'&&worstCost(plan)>STARTER.order)throw Error('Starter order limit');
     if(plan.side==='SELL'&&!account.positions.some(p=>p.token===plan.token&&p.shares>=plan.shares))throw Error('Insufficient owned shares');
-    return {plan,approval:planHash(plan),account,marketQuestion:market.question,marketRules:market.description||'',
+    return {plan,approval:planHash(plan),account,outcomeLabel:outcomes[ids.indexOf(request.token)],marketQuestion:market.question,marketRules:market.description||'',
       protocol:{version:bookVersion,negRisk:book.neg_risk===true},request,mode:'PREVIEW_ONLY',ordersSubmitted:0};
   }
 }
