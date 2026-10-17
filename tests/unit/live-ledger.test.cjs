@@ -25,6 +25,7 @@ function setup(t) {
 test('live mode defaults disabled, file is private and activation is explicit',t=>{
   const s=setup(t);
   assert.equal(s.ledger.mode(),'disabled');
+  assert.equal(s.ledger.db.pragma('synchronous',{simple:true}),2);
   if(process.platform!=='win32')assert.equal(statSync(s.file).mode&0o777,0o600);
   assert.throws(()=>s.ledger.activate(s.account(),{}),/owner activation/);
   const p=s.plan();assert.throws(()=>s.ledger.reserve(p,s.account(),planHash(p)),/disabled/);

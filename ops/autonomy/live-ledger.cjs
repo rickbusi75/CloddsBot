@@ -59,6 +59,8 @@ class LiveLedger {
     chmodSync(file,0o600);
     this.now=now;
     this.db.pragma('journal_mode = WAL');
+    // SENDING must be durable before any external request, including power loss.
+    this.db.pragma('synchronous = FULL');
     this.db.exec(`CREATE TABLE IF NOT EXISTS live_config(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS live_intents(id TEXT PRIMARY KEY,at TEXT NOT NULL,market TEXT NOT NULL,
         event TEXT NOT NULL,token TEXT NOT NULL,side TEXT NOT NULL,price REAL NOT NULL,shares REAL NOT NULL,
