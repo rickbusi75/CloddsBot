@@ -7,6 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 ExecStart=/usr/bin/docker exec cloddsbot-bot-1 python3 -u /app/ops/autonomy/worker.py daemon
+ExecStop=/usr/bin/docker exec cloddsbot-bot-1 python3 /app/ops/autonomy/worker.py stop
 Restart=always
 RestartSec=30
 TimeoutStopSec=15

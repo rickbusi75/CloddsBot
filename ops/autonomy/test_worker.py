@@ -2,6 +2,9 @@ import datetime as dt
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
+import time
 import unittest
 from unittest.mock import patch
 import worker
@@ -62,6 +65,36 @@ class ObserverTests(unittest.TestCase):
         state, message = watchdog.transition(state, False, worker.utcnow())
         self.assertIsNone(message)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux daemon lifecycle')
+    def test_daemon_singleton_stop_and_restart_retain_pause_and_ledger(self):
+        root = Path(self.tmp.name)
+        (root / 'control.json').write_text('{"paused":true}')
+        env = root / 'empty.env'
+        config = root / 'config.json'
+        env.write_text('')
+        config.write_text('{}')
+        command = [sys.executable, str(Path(worker.__file__).resolve())]
+        options = ['--data', str(root), '--env', str(env), '--config', str(config)]
+        self.observer.reserve(.01, {'usage_daily': 0, 'usage_monthly': 0})
+        for _ in range(2):
+            child = subprocess.Popen(command + ['daemon'] + options, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(100):
+                    pidfile = root / 'worker.pid'
+                    if pidfile.exists() and pidfile.read_text() == str(child.pid):
+                        break
+                    time.sleep(.02)
+                self.assertEqual(pidfile.read_text(), str(child.pid))
+                duplicate = subprocess.run(command + ['daemon'] + options, capture_output=True, timeout=5)
+                self.assertNotEqual(duplicate.returncode, 0)
+                subprocess.run(command + ['stop'] + options, check=True, timeout=10)
+                child.wait(timeout=5)
+                self.assertTrue(self.observer.controls()['paused'])
+                self.assertAlmostEqual(self.observer.ledger_cost(worker.utcnow().isoformat()[:10]), .01)
+            finally:
+                if child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=5)
     def test_sources_are_untrusted_unknown_or_duplicate_domains_abstain(self):
         market = {'id': 'm', 'event': 'event', 'tokens': ['yes', 'no'], 'question': 'Example'}
         evidence = [{'url': 'https://a.com/one'}, {'url': 'https://b.com/two'}]

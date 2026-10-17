@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import signal
 import sqlite3
 import time
 import urllib.error
@@ -532,12 +533,31 @@ def load_env(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['daemon', 'once', 'status', 'pause', 'resume', 'report'])
+    parser.add_argument('command', choices=['daemon', 'once', 'status', 'pause', 'resume', 'report', 'stop'])
     parser.add_argument('--data', default='/data/autonomy')
     parser.add_argument('--env', default='/app/.env')
     parser.add_argument('--config', default='/config/clodds.json')
     args = parser.parse_args()
     os.umask(0o077)
+    if args.command == 'stop':
+        # docker exec's client can exit while its container process keeps running.
+        # Stop only a verified observer daemon; never rely on an unverified PID file.
+        pid_file = Path(args.data) / 'worker.pid'
+        if pid_file.exists():
+            pid = int(pid_file.read_text())
+            process = Path('/proc') / str(pid)
+            try:
+                command = (process / 'cmdline').read_bytes().split(b'\0')
+                if os.fsencode(__file__) not in command or b'daemon' not in command or process.stat().st_uid != os.getuid():
+                    raise RuntimeError('Observer PID identity mismatch')
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(50):
+                    if not process.exists():
+                        break
+                    time.sleep(.1)
+            except FileNotFoundError:
+                pass
+        return
     env = load_env(args.env)
     # Keep private signing credentials out of the observer's environment and model context.
     for key in list(os.environ):
@@ -560,6 +580,7 @@ def main():
         import fcntl
         lock = (observer.data / 'worker.lock').open('w')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        (observer.data / 'worker.pid').write_text(str(os.getpid()))
         while True:
             try:
                 observer.tick()
