@@ -1,7 +1,7 @@
 name: cloddsbot
 services:
   bot:
-    image: lab/cloddsbot:rick-20261017.6
+    image: lab/cloddsbot:rick-20261017.7
     build:
       context: ../..
       dockerfile: Dockerfile.lab
