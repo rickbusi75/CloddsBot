@@ -115,7 +115,8 @@ class PolymarketReader {
     const rate=number(info.fd?.r,'authoritative fee rate',0,.10),exponent=number(info.fd?.e,'fee exponent');
     if(exponent!==1)throw Error('Unsupported fee schedule');
     const rulesHash=createHash('sha256').update(JSON.stringify({question:market.question,description:market.description||'',
-      end:market.endDate,source:market.resolutionSource,outcomes,ids,condition:market.conditionId})).digest('hex');
+      end:market.endDate,source:market.resolutionSource,outcomes,ids,condition:market.conditionId,
+      protocol:bookVersion,negRisk:book.neg_risk===true})).digest('hex');
     const plan=validatePlan({market:market.conditionId,event:String(market.events?.[0]?.id||market.id),token:request.token,
       side:request.side,price:request.price,shares:request.shares,feeRate:rate,strategy:'explicit-human-test',
       rulesHash,
