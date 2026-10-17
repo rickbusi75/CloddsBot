@@ -35,11 +35,11 @@ def recovery_allowed(state, mode, vpn, bot, service, now):
 
 
 def container_state(name):
-    result = subprocess.run(['docker', 'inspect', '--format', '{{json .State}}', name],
-                            capture_output=True, text=True, timeout=15)
     try:
+        result = subprocess.run(['docker', 'inspect', '--format', '{{json .State}}', name],
+                                capture_output=True, text=True, timeout=15)
         return json.loads(result.stdout) if result.returncode == 0 else {}
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired, OSError):
         return {}
 
 
@@ -68,8 +68,11 @@ def main():
     vpn, bot = container_state('cloddsbot-gluetun-1'), container_state('cloddsbot-bot-1')
     if mode == 'vpn' and vpn.get('Health', {}).get('Status') != 'healthy':
         failed = True
-    service = subprocess.run(['systemctl', 'is-active', 'clodds-observer'],
-                             capture_output=True, text=True, timeout=15).stdout.strip()
+    try:
+        service = subprocess.run(['systemctl', 'is-active', 'clodds-observer'],
+                                 capture_output=True, text=True, timeout=15).stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        service, failed = 'unknown', True
     updated, message = transition(state, failed, now)
     if recovery_allowed(updated, mode, vpn, bot, service, now):
         updated['lastRecoveryAttempt'] = now.isoformat()

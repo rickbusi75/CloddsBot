@@ -111,6 +111,8 @@ class ObserverTests(unittest.TestCase):
         self.assertFalse(watchdog.recovery_allowed({'failures': 2}, 'vpn', vpn, bot, 'active', now))
         self.assertFalse(watchdog.recovery_allowed({'failures': 3, 'lastRecoveryAttempt': now.isoformat()}, 'vpn', vpn, bot, 'active', now))
         self.assertFalse(watchdog.recovery_allowed(state, 'vpn', {'Running': True, 'Health': {'Status': 'healthy'}}, bot, 'active', now))
+        with patch.object(watchdog.subprocess, 'run', side_effect=subprocess.TimeoutExpired('docker', 15)):
+            self.assertEqual(watchdog.container_state('cloddsbot-bot-1'), {})
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux daemon lifecycle')
     def test_daemon_singleton_stop_and_restart_retain_pause_and_ledger(self):
