@@ -45,6 +45,10 @@ shares must agree with the approved order and observed balances. Unexpected
 cashflows retain the reservation and halt new entries. Equal offsetting external
 cashflows cannot be ruled out by balance differences alone; authoritative chain
 activity and external-movement handling remain a deployment prerequisite.
+`live-chain.cjs` now supplies standalone read-only finalized-block, collateral-log
+and receipt evidence with two-service agreement per category; see
+`CHAIN-EVIDENCE.md`. It does not yet persist ledger anchors or attribute an
+exchange fill to an approved order, so that prerequisite remains incomplete.
 The current signer supports only cent prices and two-decimal share quantities;
 unsupported precision is rejected rather than silently rounded. Fees withheld
 from received shares are recorded as actual net inventory. Small residual shares
