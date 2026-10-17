@@ -10,7 +10,7 @@ export function reserveAiSpend(path: string, amount: number, provider: Record<st
   daily = .60, monthly = 20, now = new Date()): void {
   if (!Number.isFinite(amount) || amount <= 0 || amount > .05) throw new Error('AI request exceeds its cost ceiling');
   const dailyUsage = Number(provider.usage_daily), monthlyUsage = Number(provider.usage_monthly);
-  if (provider.usage_daily == null || provider.usage_monthly == null || !Number.isFinite(dailyUsage) || !Number.isFinite(monthlyUsage)) {
+  if (provider.usage_daily == null || provider.usage_monthly == null || !Number.isFinite(dailyUsage) || !Number.isFinite(monthlyUsage) || dailyUsage < 0 || monthlyUsage < 0) {
     throw new Error('AI provider budget unavailable');
   }
   const db = new Sqlite(path, { timeout: 30000 });
@@ -20,7 +20,9 @@ export function reserveAiSpend(path: string, amount: number, provider: Record<st
       const at = now.toISOString();
       const spent = (prefix: string) => (db.prepare('SELECT COALESCE(SUM(COALESCE(actual,reserved)),0) AS total FROM costs WHERE at LIKE ?')
         .get(prefix + '%') as { total: number }).total;
-      if (Math.max(spent(at.slice(0, 10)), dailyUsage) + amount > daily || Math.max(spent(at.slice(0, 7)), monthlyUsage) + amount > monthly
+      // Add both: provider totals can omit in-flight reservations and include
+      // other clients. Double counting settled requests is deliberately conservative.
+      if (spent(at.slice(0, 10)) + dailyUsage + amount > daily || spent(at.slice(0, 7)) + monthlyUsage + amount > monthly
         || (provider.limit_remaining != null && Number(provider.limit_remaining) < amount)) throw new Error('AI budget exhausted');
       db.prepare('INSERT INTO costs(at,reserved,state) VALUES(?,?,?)').run(at, amount, 'chat_reserved');
     }).immediate();

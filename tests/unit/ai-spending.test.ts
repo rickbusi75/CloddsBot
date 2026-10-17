@@ -13,8 +13,10 @@ test('chat reserves against the same persistent ledger and provider totals', () 
     for (let i = 0; i < 11; i++) reserveAiSpend(path, .05, provider);
     assert.throws(() => reserveAiSpend(path, .051, provider), /ceiling/);
     assert.throws(() => reserveAiSpend(path, .05, { usage_daily: .59, usage_monthly: 0 }), /exhausted/);
+    assert.throws(() => reserveAiSpend(path, .01, { usage_daily: .10, usage_monthly: 0 }), /exhausted/);
     assert.throws(() => reserveAiSpend(path, .05, { usage_daily: 0, usage_monthly: 19.99 }), /exhausted/);
     assert.throws(() => reserveAiSpend(path, .01, {}), /unavailable/);
+    assert.throws(() => reserveAiSpend(path, .01, { usage_daily: -1, usage_monthly: 0 }), /unavailable/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('budgeted streaming request is sent once only after successful pricing and reservation', async () => {
