@@ -5,7 +5,7 @@ const {PolymarketReader}=require('../../ops/autonomy/live-reader.cjs');
 const NOW=Date.parse('2026-10-17T12:00:00Z');
 const auth={address:'0x'+'1'.repeat(40),signatureType:3};
 const condition='0x'+'2'.repeat(64);
-const book={asset_id:'token',timestamp:String(NOW),min_order_size:'5',tick_size:'.01',
+const book={asset_id:'token',version:'v2',neg_risk:false,timestamp:String(NOW),min_order_size:'5',tick_size:'.01',
   asks:[{price:'.2',size:'100'}],bids:[{price:'.19',size:'100'}]};
 function reader(overrides={},clock=()=>NOW) {
   const calls=[];
@@ -77,8 +77,10 @@ test('preview validates V2 token identity, fees, tick and executable size with n
   assert.equal(preview.mode,'PREVIEW_ONLY');assert.equal(preview.ordersSubmitted,0);
   assert.equal(preview.plan.feeRate,.04);assert.match(preview.approval,/^[a-f0-9]{64}$/);
   assert.equal(preview.plan.market,condition);
+  assert.equal(preview.protocol.version,'v2');
   assert(s.calls.every(c=>c.init.method==='GET'));
   await assert.rejects(s.client.preview({gammaId:'market',token:'legacy',side:'BUY',price:.2,shares:6}),/asset protocol/);
+  await assert.rejects(reader({'/book':{...book,version:'v1'}}).client.preview({gammaId:'market',token:'token',side:'BUY',price:.2,shares:6}),/signing protocol/);
 });
 test('preview rejects missing fee schedule, thin depth, excessive budget and unowned sales',async()=>{
   const request={gammaId:'market',token:'token',side:'BUY',price:.2,shares:6};

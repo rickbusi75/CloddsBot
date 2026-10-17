@@ -109,6 +109,9 @@ class PolymarketReader {
     if(!/^0x[0-9a-fA-F]{64}$/.test(market.conditionId))throw Error('Market condition missing');
     const [book,info,account]=await Promise.all([this.book(request.token),
       this.get('https://clob.polymarket.com/clob-markets/'+market.conditionId),this.account()]);
+    const bookVersion=book.version||'v1',marketVersion=market.version||'v1';
+    if(bookVersion!==marketVersion||!['v1','v2'].includes(bookVersion)
+      ||(bookVersion==='v1'&&typeof book.neg_risk!=='boolean'))throw Error('Market signing protocol unknown or inconsistent');
     const rate=number(info.fd?.r,'authoritative fee rate',0,.10),exponent=number(info.fd?.e,'fee exponent');
     if(exponent!==1)throw Error('Unsupported fee schedule');
     const rulesHash=createHash('sha256').update(JSON.stringify({question:market.question,description:market.description||'',
@@ -126,7 +129,7 @@ class PolymarketReader {
     if(plan.side==='BUY'&&worstCost(plan)>STARTER.order)throw Error('Starter order limit');
     if(plan.side==='SELL'&&!account.positions.some(p=>p.token===plan.token&&p.shares>=plan.shares))throw Error('Insufficient owned shares');
     return {plan,approval:planHash(plan),account,marketQuestion:market.question,marketRules:market.description||'',
-      protocol:{version:book.version||'v1',negRisk:book.neg_risk===true},request,mode:'PREVIEW_ONLY',ordersSubmitted:0};
+      protocol:{version:bookVersion,negRisk:book.neg_risk===true},request,mode:'PREVIEW_ONLY',ordersSubmitted:0};
   }
 }
 module.exports={PolymarketReader};
