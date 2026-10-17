@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --legacy-peer-deps
+      - name: Build SQLite binding for the shared spending ledger
+        run: npm rebuild better-sqlite3 --build-from-source --ignore-scripts=false
       - run: npm run typecheck
       - name: Observer accounting and controls (no credentials or paid requests)
         run: |

@@ -87,6 +87,12 @@ extends the existing coherent CloddsBot dump. Rollback: stop the observer, resto
 previous bot image and configuration from the private pre-deployment directory; keep
 the paper database for audit. Do not overwrite the main CloddsBot database.
 
+The external clodds-observer-watchdog.timer checks freshness every five minutes on
+the VPS host. Three consecutive stale checks send one operational Telegram alert,
+and recovery sends one confirmation. This does not require a running bot container
+or an AI call. The host itself being offline still requires external monitoring.
+ops/autonomy/backup-observer.py creates the coherent dump used by lab-backup.
+
 ## Live trading gate
 
 Rick approved a future EUR 200 capital with limits EUR 5/order, EUR 30 total exposure,
