@@ -71,6 +71,18 @@ class ObserverTests(unittest.TestCase):
         (Path(self.tmp.name) / 'control.json').write_text('{broken')
         self.assertTrue(self.observer.controls()['paused'])
 
+    def test_hourly_single_run_and_two_daily_digests_follow_paris_including_dst(self):
+        (Path(self.tmp.name) / 'control.json').write_text('{"paused":true}')
+        for instant in ('2026-10-17T07:05:00+00:00', '2026-10-17T18:05:00+00:00', '2026-10-25T08:05:00+00:00'):
+            with patch.object(worker, 'utcnow', return_value=dt.datetime.fromisoformat(instant)), \
+                 patch.object(self.observer, 'reconcile'), patch.object(self.observer, 'deliver'):
+                self.observer.tick()
+                self.observer.tick()
+        keys = [r[0] for r in self.observer.db.execute('SELECT key FROM outbox ORDER BY key')]
+        self.assertEqual(keys, ['digest:2026-10-17:09', 'digest:2026-10-17:20', 'digest:2026-10-25:09'])
+        self.assertEqual(self.observer.db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 3)
+        self.assertEqual(self.observer.db.execute('SELECT COUNT(*) FROM costs').fetchone()[0], 0)
+
     def test_watchdog_alerts_after_three_failures_and_once_on_recovery(self):
         state = {}
         for i in range(3):
