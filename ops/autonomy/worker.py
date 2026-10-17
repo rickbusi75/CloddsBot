@@ -205,17 +205,17 @@ class Observer:
         now = utcnow().isoformat()
         daily = finite(provider.get('usage_daily'))
         monthly = finite(provider.get('usage_monthly'))
-        if (not math.isfinite(amount) or not 0 < amount <= .05 or daily is None or monthly is None
-                or max(self.ledger_cost(now[:10]), daily) + amount > .60
-                or max(self.ledger_cost(now[:7]), monthly) + amount > 20):
+        if (not math.isfinite(amount) or not 0 < amount <= .05 or daily is None or monthly is None or daily < 0 or monthly < 0
+                or self.ledger_cost(now[:10]) + daily + amount > .60
+                or self.ledger_cost(now[:7]) + monthly + amount > 20):
             raise RuntimeError('AI budget unavailable or exhausted')
         remaining = finite(provider.get('limit_remaining'))
         if remaining is not None and remaining < amount:
             raise RuntimeError('AI key credit exhausted')
         # Serialize with concurrent chat reservations in the same SQLite ledger.
         self.db.execute('BEGIN IMMEDIATE')
-        if (max(self.ledger_cost(now[:10]), daily) + amount > .60
-                or max(self.ledger_cost(now[:7]), monthly) + amount > 20):
+        if (self.ledger_cost(now[:10]) + daily + amount > .60
+                or self.ledger_cost(now[:7]) + monthly + amount > 20):
             self.db.rollback()
             raise RuntimeError('AI budget exhausted')
         cur = self.db.execute('INSERT INTO costs(at,reserved,state) VALUES(?,?,?)', (now, amount, 'reserved'))

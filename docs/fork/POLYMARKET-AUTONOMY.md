@@ -36,6 +36,10 @@ chat reservations remain conservative, including streaming. This can stop spendi
 early. A failed lookup blocks spending. Images require a separate estimator and are
 blocked by the optional budgeted native client.
 
+Provider-reported usage is added to local reservations, rather than taking their
+maximum: provider counters may omit in-flight requests and include other clients.
+This deliberately double-counts some settled spending to avoid under-reserving.
+
 Enable the native client guard with CLODDS_AI_BUDGET_ENABLED=true. It protects calls
 through createAgentClient, including the main chat and its native assistants. It does
 not cap independent scripts, separate provider integrations, other devices using the

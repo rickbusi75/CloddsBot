@@ -62,6 +62,10 @@ class ObserverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.observer.reserve(.05, {'usage_daily': .59, 'usage_monthly': 0})
         with self.assertRaises(RuntimeError):
+            self.observer.reserve(.01, {'usage_daily': .10, 'usage_monthly': 0})
+        with self.assertRaises(RuntimeError):
+            self.observer.reserve(.01, {'usage_daily': -1, 'usage_monthly': 0})
+        with self.assertRaises(RuntimeError):
             self.observer.reserve(.05, {'usage_daily': 0, 'usage_monthly': 19.99})
         other = worker.Observer(self.tmp.name)
         self.addCleanup(other.db.close)
