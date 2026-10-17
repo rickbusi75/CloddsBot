@@ -19,7 +19,8 @@ export interface MetaculusPost {
 const BASE = 'https://www.metaculus.com/api/';
 
 export async function metaculusGet<T>(path: string): Promise<T> {
-  const token = process.env.METACULUS_TOKEN;
+  // Environment Setup writes quoted dotenv values; Docker env_file retains the quotes.
+  const token = process.env.METACULUS_TOKEN?.trim().replace(/^(["'])(.*)\1$/, '$2');
   if (!token) throw new Error('Configure METACULUS_TOKEN in Environment Setup.');
   const url = new URL(path, BASE);
   // Never send the credential to a pagination URL outside the Metaculus API.

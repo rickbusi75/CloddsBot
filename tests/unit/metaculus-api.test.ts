@@ -8,7 +8,7 @@ test('Metaculus authentication, post IDs, filters and restricted forecasts', asy
   try {
     delete process.env.METACULUS_TOKEN;
     await assert.rejects(metaculusGet('posts/'), /METACULUS_TOKEN/);
-    process.env.METACULUS_TOKEN = 'test-only-token';
+    process.env.METACULUS_TOKEN = '"test-only-token"';
     let calls = 0;
     globalThis.fetch = (async (url: URL | string | Request, init?: RequestInit) => {
       calls++;
