@@ -1,13 +1,11 @@
 {
   // audit-ci config — see .github/workflows/ci.yml and security.yml.
   //
-  // Every advisory below is transitive through the Solana/crypto SDK ecosystem's own
-  // pinned old dependencies (@project-serum/anchor, @coral-xyz/anchor, @drift-labs/sdk,
-  // and friends depend on old @solana/web3.js/protobufjs/uuid/@grpc-js internally).
-  // None of these have a fix that doesn't mean either
-  // downgrading a currently-working trading integration or forcing a major bump whose
-  // breaking changes haven't been vetted (e.g. @drift-labs/sdk's suggested fix requires
-  // Node 24, a separate decision from a routine audit pass).
+  // Remaining exceptions are transitive through the Solana/crypto SDK ecosystem.
+  // Remaining exceptions need individual review. Compatible transitive updates
+  // should be preferred over npm's suggested wholesale SDK downgrade/upgrade.
+  // In particular @grpc/grpc-js is now overridden to its patched 1.14 line;
+  // its previous exceptions have been removed rather than hiding new findings.
   //
   // Re-run `npm audit --audit-level=moderate --production` periodically — when an
   // upstream SDK finally updates its own pinned deps, the corresponding entry below
@@ -15,28 +13,6 @@
   "moderate": true,
   "production": true,
   "allowlist": [
-    // @grpc/grpc-js — via @drift-labs/sdk. Fix requires @drift-labs/sdk@2.141.0, a
-    // semver-major bump needing Node >=24 (this repo targets Node 22) — not a safe
-    // drop-in for a live trading integration verified working this session.
-    "GHSA-5375-pq7m-f5r2",
-    "GHSA-99f4-grh7-6pcq",
-
-    // protobufjs / protobuf.js — transitive through @project-serum/anchor and the
-    // wider Solana SDK tree (Orca, Kamino, Raydium's own transitive deps, etc.), all
-    // of which pin old @solana/web3.js internally. No fix without forcing a
-    // semver-major on packages this session verified are live and working.
-    "GHSA-xq3m-2v4x-88gg",
-    "GHSA-66ff-xgx4-vchm",
-    "GHSA-2pr8-phx7-x9h3",
-    "GHSA-fx83-v9x8-x52w",
-    "GHSA-75px-5xx7-5xc7",
-    "GHSA-jvwf-75h9-cwgg",
-    "GHSA-685m-2w69-288q",
-    "GHSA-q6x5-8v7m-xcrf",
-    "GHSA-jggg-4jg4-v7c6",
-    "GHSA-wcpc-wj8m-hjx6",
-    "GHSA-f38q-mgvj-vph7",
-
     // uuid — v3/v5/v6 buffer-bounds check (the v4 generator is unaffected). Verified
     // node-cron's own source only calls uuid.v4() (scheduled-task.js, storage.js).
     // The other path, @wormhole-foundation/sdk-solana's pinned rpc-websockets, has no
