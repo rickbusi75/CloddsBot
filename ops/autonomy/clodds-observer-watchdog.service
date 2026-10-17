@@ -4,4 +4,5 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=240
 ExecStart=/usr/bin/python3 /srv/lab/scripts/clodds-observer-watchdog.py

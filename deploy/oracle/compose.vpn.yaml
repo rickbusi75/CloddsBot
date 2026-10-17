@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     mem_limit: 256m
   bot:
-    image: lab/cloddsbot:rick-20261017.4
+    image: lab/cloddsbot:rick-20261017.5
     init: true
     env_file: /srv/lab/config/cloddsbot/bot.env
     environment:

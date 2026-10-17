@@ -99,6 +99,21 @@ class ObserverTests(unittest.TestCase):
         state, message = watchdog.transition(state, False, worker.utcnow())
         self.assertIsNone(message)
 
+    def test_vpn_recovery_respects_mode_manual_stop_and_hourly_cooldown(self):
+        now = worker.utcnow()
+        state = {'failures': 3}
+        vpn = {'Running': True, 'Health': {'Status': 'unhealthy'}}
+        bot = {'Status': 'running'}
+        self.assertTrue(watchdog.recovery_allowed(state, 'vpn', vpn, bot, 'active', now))
+        for mode, service in [('direct', 'active'), ('unknown', 'active'), ('vpn', 'inactive')]:
+            self.assertFalse(watchdog.recovery_allowed(state, mode, vpn, bot, service, now))
+        self.assertFalse(watchdog.recovery_allowed(state, 'vpn', vpn, {'Status': 'exited'}, 'activating', now))
+        self.assertFalse(watchdog.recovery_allowed({'failures': 2}, 'vpn', vpn, bot, 'active', now))
+        self.assertFalse(watchdog.recovery_allowed({'failures': 3, 'lastRecoveryAttempt': now.isoformat()}, 'vpn', vpn, bot, 'active', now))
+        self.assertFalse(watchdog.recovery_allowed(state, 'vpn', {'Running': True, 'Health': {'Status': 'healthy'}}, bot, 'active', now))
+        with patch.object(watchdog.subprocess, 'run', side_effect=subprocess.TimeoutExpired('docker', 15)):
+            self.assertEqual(watchdog.container_state('cloddsbot-bot-1'), {})
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux daemon lifecycle')
     def test_daemon_singleton_stop_and_restart_retain_pause_and_ledger(self):
         root = Path(self.tmp.name)
