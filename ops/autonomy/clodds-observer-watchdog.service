@@ -1,0 +1,7 @@
+[Unit]
+Description=CloddsBot observer availability watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /srv/lab/scripts/clodds-observer-watchdog.py

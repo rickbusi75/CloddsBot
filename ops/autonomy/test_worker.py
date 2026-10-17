@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import worker
+import watchdog
 
 
 class ObserverTests(unittest.TestCase):
@@ -48,6 +49,18 @@ class ObserverTests(unittest.TestCase):
     def test_bad_controls_fail_closed(self):
         (Path(self.tmp.name) / 'control.json').write_text('{broken')
         self.assertTrue(self.observer.controls()['paused'])
+
+    def test_watchdog_alerts_after_three_failures_and_once_on_recovery(self):
+        state = {}
+        for i in range(3):
+            state, message = watchdog.transition(state, True, worker.utcnow())
+            self.assertEqual(bool(message), i == 2)
+        state, message = watchdog.transition(state, True, worker.utcnow())
+        self.assertIsNone(message)
+        state, message = watchdog.transition(state, False, worker.utcnow())
+        self.assertIsNotNone(message)
+        state, message = watchdog.transition(state, False, worker.utcnow())
+        self.assertIsNone(message)
 
     def test_sources_are_untrusted_unknown_or_duplicate_domains_abstain(self):
         market = {'id': 'm', 'event': 'event', 'tokens': ['yes', 'no'], 'question': 'Example'}

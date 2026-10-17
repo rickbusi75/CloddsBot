@@ -1,0 +1,10 @@
+[Unit]
+Description=Check CloddsBot observer availability every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Unit=clodds-observer-watchdog.service
+
+[Install]
+WantedBy=timers.target
