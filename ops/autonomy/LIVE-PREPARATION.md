@@ -85,14 +85,18 @@ accounting only. Recovery never repeats a submission. An exchange-cancelled FOK
 order can release its reservation only after authoritative no-fill, trade,
 inventory and cash checks agree.
 
-The snapshot helper can now atomically back up both observer.sqlite and live.sqlite
-when present. Tests restore a ledger with an outstanding WAL-backed submission,
+The snapshot helper can atomically back up both observer.sqlite and live.sqlite
+when present. Its host installation is separate from this draft: PR #14 supplies
+the helper installed at `/srv/lab/scripts/backup-clodds-observer.py` and the host
+archive exclusion for active live.sqlite/WAL/SHM files. Tests restore a ledger with an outstanding WAL-backed submission,
 verify that it stays reserved/unknown after restart, and preserve the previous
-good dump when a source is corrupt. Installing the updated helper and excluding
-the active live.sqlite/WAL from the host archive still belong to deployment.
+good dump when a source is corrupt or its deadline expires. A disappearing source
+with a previous dump fails the job. An absent optional ledger is never created.
+See `BACKUP.md` for host installation and isolated restore verification. Neither
+installing this helper nor backing up a database activates financial operations.
 
 Before installing the operator prototype or enabling an execution service, finish and
-review: installation of the separate ledger backup, authoritative handling
+review: archive/restore of any subsequently created funded ledger, authoritative handling
 of outside cashflows and maker trades, source/strategy validation, settlement and
 Deposit Wallet redemption, account-latency and real-exchange tests, exposure and
 currency checks, emergency cancellation and notifications. Actual activation and
