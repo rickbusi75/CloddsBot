@@ -18,6 +18,7 @@ import type { PairingService } from '../../pairing/index';
 import type { CommandRegistry } from '../../commands/registry';
 import { RateLimiter } from '../../security';
 import { sleep } from '../../infra/retry';
+import { observerCommand } from './observer-control';
 
 export async function createTelegramChannel(
   config: NonNullable<Config['channels']['telegram']>,
@@ -317,6 +318,12 @@ export async function createTelegramChannel(
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
     const userId = msg.from?.id?.toString() || '';
     const username = msg.from?.username;
+
+    const observerReply = await observerCommand(text, staticAllowlist.has(userId), msg.chat.type === 'private');
+    if (observerReply !== null) {
+      await callTelegramApi(msg.chat.id, 'reply(observer)', () => ctx.reply(observerReply));
+      return;
+    }
 
     // DM Policy enforcement (only for DMs, not groups)
     if (!isGroup) {
