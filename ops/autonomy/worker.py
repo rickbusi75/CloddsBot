@@ -64,7 +64,7 @@ def public_url(url):
     return url
 
 
-def request(url, headers=None, body=None, text=False, source=False):
+def request(url, headers=None, body=None, text=False, source=False, timeout=45):
     if source:
         public_url(url)
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
@@ -73,7 +73,7 @@ def request(url, headers=None, body=None, text=False, source=False):
         **({'Content-Type': 'application/json'} if data else {}), **(headers or {})})
     # Never include URLs/HTTP bodies in error logs: they may contain API credentials.
     try:
-        with urllib.request.build_opener(NoRedirect).open(req, timeout=45) as response:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
             raw = response.read(2_000_001)
             if len(raw) > 2_000_000:
                 raise RuntimeError('Response too large')
@@ -158,6 +158,19 @@ def taker_fee_rate(info):
     return rate
 
 
+def resolved_result(market, outcome, market_id, condition=None):
+    """Match identity and outcome labels before accepting a final binary payout."""
+    if (not isinstance(market, dict) or str(market.get('id')) != str(market_id)
+            or (condition and market.get('conditionId') != condition)):
+        raise ValueError('Market identity mismatch')
+    labels = [str(x).upper() for x in array(market.get('outcomes', []))]
+    prices = [finite(x) for x in array(market.get('outcomePrices', []))]
+    if (market.get('umaResolutionStatus') != 'resolved' or sorted(labels) != ['NO', 'YES']
+            or len(prices) != 2 or any(x is None for x in prices) or sorted(prices) != [0, 1]):
+        return None
+    return prices[labels.index(outcome)]
+
+
 class Observer:
     def __init__(self, data, env=None, config=None):
         self.data = Path(data)
@@ -175,6 +188,10 @@ class Observer:
           outcome TEXT, question TEXT, shares REAL, cost REAL, fees REAL, mark REAL, payout REAL, opened TEXT, closed TEXT);
         CREATE TABLE IF NOT EXISTS outbox(key TEXT PRIMARY KEY, text TEXT, sent TEXT, attempts INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS forecasts(research_id INTEGER PRIMARY KEY, at TEXT NOT NULL,
+          market TEXT NOT NULL, condition_id TEXT, end_at TEXT NOT NULL, outcome TEXT NOT NULL,
+          probability REAL NOT NULL, baseline REAL NOT NULL, action TEXT NOT NULL, model TEXT NOT NULL,
+          result REAL, checked_at TEXT, resolved_at TEXT);
         ''')
         self.db.commit()
 
@@ -189,7 +206,7 @@ class Observer:
     def controls(self):
         try:
             value = json.loads((self.data / 'control.json').read_text())
-            if not isinstance(value.get('paused'), bool):
+            if not isinstance(value, dict) or not isinstance(value.get('paused'), bool):
                 raise ValueError()
             return value
         except FileNotFoundError:
@@ -254,23 +271,75 @@ class Observer:
                 'open': sum(not bool(r['closed']) for r in rows), 'dailyLoss': -daily_loss}
 
     def reconcile(self):
-        for row in self.db.execute('SELECT * FROM positions WHERE closed IS NULL').fetchall():
-            market, _ = request('https://gamma-api.polymarket.com/markets/' + urllib.parse.quote(row['market']))
-            prices = [finite(x) for x in array(market.get('outcomePrices', []))]
-            index = 0 if row['outcome'] == 'YES' else 1
-            # Do not infer settlement from closure alone: require final resolution AND binary payout.
-            if market.get('umaResolutionStatus') == 'resolved' and len(prices) == 2 and sorted(prices) == [0, 1]:
-                self.db.execute('UPDATE positions SET payout=?,mark=?,closed=? WHERE id=?',
-                                (row['shares'] * prices[index], prices[index], utcnow().isoformat(), row['id']))
-            else:
-                book, _ = request('https://clob.polymarket.com/book?token_id=' + urllib.parse.quote(row['token']))
-                bids = [finite(x.get('price')) for x in book.get('bids', [])]
-                valid = [p for p in bids if p is not None and 0 <= p <= 1]
-                ts = finite(book.get('timestamp'))
-                if valid and ts and -5 <= time.time() - ts / 1000 <= 60:
+        rows = self.db.execute('SELECT * FROM positions WHERE closed IS NULL').fetchall()
+        unavailable = 0
+        for row in rows:
+            try:
+                market, _ = request('https://gamma-api.polymarket.com/markets/' + urllib.parse.quote(row['market']))
+                result = resolved_result(market, row['outcome'], row['market'])
+                if result is not None:
+                    self.db.execute('UPDATE positions SET payout=?,mark=?,closed=? WHERE id=?',
+                                    (row['shares'] * result, result, utcnow().isoformat(), row['id']))
+                else:
+                    book, _ = request('https://clob.polymarket.com/book?token_id=' + urllib.parse.quote(row['token']))
+                    bids = [finite(x.get('price')) for x in book.get('bids', [])]
+                    valid = [p for p in bids if p is not None and 0 <= p <= 1]
+                    ts = finite(book.get('timestamp'))
+                    if (str(book.get('asset_id')) != str(row['token']) or not valid or not ts
+                            or not -5 <= time.time() - ts / 1000 <= 60):
+                        raise ValueError('Position mark unavailable')
                     self.db.execute('UPDATE positions SET mark=? WHERE id=?', (max(valid), row['id']))
+                self.db.commit()
+            except (RuntimeError, ValueError, TypeError, KeyError, OSError):
+                unavailable += 1
+        at = utcnow().isoformat()
+        self.put('lastReconciliation', at)
+        self.put('reconciliation', {'at': at, 'positions': len(rows), 'unavailable': unavailable})
+
+    def record_forecast(self, research_id, market, decision, action):
+        probability = finite(decision.get('probability'))
+        outcome = decision.get('outcome')
+        if probability is None or not 0 <= probability <= 1 or outcome not in ('YES', 'NO'):
+            return
+        baseline = finite(market['prices'][0 if outcome == 'YES' else 1])
+        if baseline is None or not 0 <= baseline <= 1:
+            return
+        self.db.execute('INSERT OR IGNORE INTO forecasts(research_id,at,market,condition_id,end_at,outcome,probability,baseline,action,model) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                        (research_id, utcnow().isoformat(), market['id'], market.get('conditionId'), market['end'],
+                         outcome, probability, baseline, action, self.env.get('CLODDS_MODEL', 'z-ai/glm-5.3-flash')))
+
+    def evaluate_forecasts(self):
+        now = utcnow()
+        # At most ten public market reads per hourly cycle; daily before cutoff,
+        # hourly after cutoff, oldest check first. No extra AI or paid searches.
+        rows = self.db.execute('''SELECT * FROM forecasts WHERE result IS NULL
+          AND (end_at <= ? OR checked_at IS NULL OR checked_at <= ?)
+          ORDER BY COALESCE(checked_at,''),research_id LIMIT 10''',
+                               (now.isoformat(), (now - dt.timedelta(days=1)).isoformat())).fetchall()
+        markets, unavailable, resolved = {}, 0, 0
+        for row in rows:
+            try:
+                if row['market'] not in markets:
+                    try:
+                        markets[row['market']], _ = request('https://gamma-api.polymarket.com/markets/' + urllib.parse.quote(row['market']), timeout=15)
+                    except (RuntimeError, OSError):
+                        markets[row['market']] = None
+                result = resolved_result(markets[row['market']], row['outcome'], row['market'], row['condition_id'])
+                if result is not None:
+                    self.db.execute('UPDATE forecasts SET result=?,resolved_at=? WHERE research_id=?',
+                                    (result, now.isoformat(), row['research_id']))
+                    resolved += 1
+            except (RuntimeError, ValueError, TypeError, KeyError, OSError):
+                unavailable += 1
+            self.db.execute('UPDATE forecasts SET checked_at=? WHERE research_id=?', (now.isoformat(), row['research_id']))
             self.db.commit()
-        self.put('lastReconciliation', utcnow().isoformat())
+        self.put('forecastEvaluation', {'at': now.isoformat(), 'checked': len(rows), 'resolved': resolved, 'unavailable': unavailable})
+
+    def forecast_metrics(self):
+        row = self.db.execute('''SELECT COUNT(*), COUNT(result), COUNT(DISTINCT CASE WHEN result IS NOT NULL THEN market END),
+          AVG(CASE WHEN result IS NOT NULL THEN (probability-result)*(probability-result) END),
+          AVG(CASE WHEN result IS NOT NULL THEN (baseline-result)*(baseline-result) END) FROM forecasts''').fetchone()
+        return dict(zip(('tracked', 'resolved', 'markets', 'brier', 'marketBrier'), row))
 
     def evidence(self, market):
         key = self.env.get('BRAVE_API_KEY') or self.env.get('BRAVE_SEARCH_API_KEY')
@@ -406,8 +475,12 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
         p = self.portfolio()
         if p['dailyLoss'] >= 15 or p['equity'] < 180:
             return 'PAPER_RISK_STOP'
+        if self.get('reconciliation', {}).get('unavailable', 0):
+            return 'PAPER_MARKS_UNAVAILABLE'
         known = {x['url'] for x in evidence}
         sources = decision.get('sources', [])
+        if not isinstance(sources, list) or any(not isinstance(url, str) for url in sources):
+            return 'ABSTAIN_EVIDENCE'
         probability, lower = finite(decision.get('probability')), finite(decision.get('lowerBound'))
         domains = {urllib.parse.urlsplit(url).hostname for url in sources if isinstance(url, str) and url in known}
         if (decision.get('decision') != 'CANDIDATE' or decision.get('outcome') not in ('YES', 'NO')
@@ -476,9 +549,10 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
             else:
                 decision = self.analyze(market, evidence)
                 action = self.paper_order(market, evidence, decision)
-            self.db.execute('INSERT INTO research(at,market,question,evidence,decision) VALUES(?,?,?,?,?)',
+            research = self.db.execute('INSERT INTO research(at,market,question,evidence,decision) VALUES(?,?,?,?,?)',
                             (utcnow().isoformat(), market['id'], market['question'], json.dumps(evidence, ensure_ascii=False),
                              json.dumps({**decision, 'action': action}, ensure_ascii=False)))
+            self.record_forecast(research.lastrowid, market, decision, action)
             self.db.commit()
         return 'ok'
 
@@ -486,6 +560,11 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
         p = self.portfolio()
         now = utcnow().isoformat()
         count = self.db.execute('SELECT COUNT(*) FROM research').fetchone()[0]
+        metrics = self.forecast_metrics()
+        scores = (f"Brier IA {metrics['brier']:.4f} / prix marché {metrics['marketBrier']:.4f} (plus bas = mieux)"
+                  if metrics['resolved'] else 'Brier : en attente de résolutions finales')
+        unavailable = self.get('reconciliation', {}).get('unavailable', 0)
+        pending = self.get('forecastEvaluation', {}).get('unavailable', 0)
         last = self.db.execute('SELECT question,decision FROM research ORDER BY id DESC LIMIT 1').fetchone()
         detail = ''
         if last:
@@ -496,10 +575,14 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
                 + f"\nValeur simulée : {p['equity']:.2f} ; disponible : {p['cash']:.2f}"
                 + f"\nP&L simulé réalisé : {p['realized']:+.2f} ; latent : {p['unrealized']:+.2f}"
                 + f"\nPositions : {p['open']} ; exposition : {p['exposure']:.2f}/30"
+                + (f"\n⚠ {unavailable} valorisation(s) indisponible(s) : valeur indicative, nouvelles entrées bloquées" if unavailable else '')
                 + "\nEtat du cycle : " + str((self.get('lastRun') or {}).get('status', 'initialisation'))
                 + f"\nAnalyses : {count} ; IA : {self.ledger_cost(now[:10]):.4f} $ aujourd’hui / 0,60 $"
                 + f"\nIA du mois (chat + veille, reservations) : {self.ledger_cost(now[:7]):.4f} $ / 20 $"
                 + "\nUsage fournisseur connu : " + str((self.get('providerBudget') or {}).get('monthly', '?')) + " $ ce mois"
+                + f"\nPrévisions suivies : {metrics['tracked']} ; résolues : {metrics['resolved']} ({metrics['markets']} marchés)"
+                + '\n' + scores
+                + (f"\nRésolutions indisponibles : {pending} ; contrôle ultérieur prévu" if pending else '')
                 + detail + '\nHypothèses IA non calibrées ; rentabilité non démontrée.'
                 + '\n/veille statut · /veille pause · /veille reprise · /veille bilan')
 
@@ -507,6 +590,8 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
         value = {'at': utcnow().isoformat(), 'mode': 'paper', 'paused': self.controls()['paused'],
                  'portfolio': self.portfolio(), 'universe': self.get('lastUniverse'),
                  'lastReconciliation': self.get('lastReconciliation'), 'lastRun': self.get('lastRun'),
+                 'reconciliation': self.get('reconciliation'), 'forecasts': self.forecast_metrics(),
+                 'forecastEvaluation': self.get('forecastEvaluation'),
                  'report': self.report()}
         temporary = self.data / 'status.tmp'
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2))
@@ -519,6 +604,7 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
             self.put('lastScanSlot', slot)  # No replay storm after crash.
             try:
                 self.reconcile()
+                self.evaluate_forecasts()
                 if not self.controls()['paused']:
                     try:
                         self.odds_snapshot()
