@@ -13,6 +13,7 @@ const finite = (value, label, minimum=0) => {
   return value;
 };
 const stable = value => JSON.stringify(value, Object.keys(value).sort());
+const tradeSnapshot = trades => Object.fromEntries(trades.map(t=>[t.id,stable(t)]));
 function planHash(plan) {
   const fields = ['market','event','token','side','price','shares','feeRate','strategy','rulesHash','expiresAt'];
   return createHash('sha256').update(stable(Object.fromEntries(fields.map(k=>[k,plan[k]])))).digest('hex');
@@ -32,6 +33,14 @@ function validateAccount(account, now) {
   for (const o of account.orders) {
     if (!o.id || !o.token || !['BUY','SELL'].includes(o.side)) throw Error('Unknown order schema');
     finite(o.remaining,'remaining shares'); finite(o.price,'order price',.000001);
+  }
+  const ids=new Set();
+  for(const t of account.trades) {
+    if(typeof t.id!=='string'||!t.id||ids.has(t.id)||typeof t.orderId!=='string'||!t.orderId
+      ||!t.token||!['BUY','SELL'].includes(t.side)
+      ||!['MATCHED','MINED','CONFIRMED','RETRYING','FAILED'].includes(t.status))throw Error('Unknown or duplicate trade');
+    ids.add(t.id);finite(t.shares,'trade shares',.000001);finite(t.price,'trade price',.000001);
+    if(t.price>=1)throw Error('Invalid trade price');
   }
   return account;
 }
@@ -83,11 +92,13 @@ class LiveLedger {
     validateAccount(account,this.now());
     if (!actor || actor.kind!=='human-owner' || typeof actor.id!=='string' || !actor.id) throw Error('Explicit owner activation required');
     if (account.orders.length || account.positions.length) throw Error('Starter activation requires a flat account');
+    if(account.trades.some(t=>!['CONFIRMED','FAILED'].includes(t.status)))throw Error('Unsettled historical trade');
     if (account.cash<STARTER.capital || account.allowance<STARTER.order) throw Error('Starter capital unavailable');
     this.db.transaction(()=>{
       if(this.get('baseline')!==undefined) throw Error('An existing live ledger cannot be reset');
       this.put('baseline',account.cash); this.put('lastCash',account.cash);
       this.put('baselineTrades',account.trades.map(t=>t.id).sort());
+      this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.put('mode','manual'); this.put('limits',STARTER); this.put('actor',actor.id);
       this.event(null,'ACTIVATED',{mode:'manual',limits:STARTER});
     }).immediate();
@@ -106,15 +117,25 @@ class LiveLedger {
     return {mode:this.mode(),limits:STARTER,baseline:this.get('baseline',null),realized,dailyLoss:loss,
       exposure:money(exposure),reserved:money(pending.reserved),pending:pending.count,ordersToday:orders,haltReason:this.get('haltReason',null)};
   }
-  checkAccount(account) {
-    validateAccount(account,this.now());
+  checkTradeHistory(account,allowedOrderId=null) {
+    const prior=this.get('lastTradeSnapshot');
+    if(!prior)throw Error('Trade history baseline unavailable; manual review required');
+    const current=tradeSnapshot(account.trades);
+    for(const [id,value] of Object.entries(prior))if(current[id]!==value)throw Error('Historical trade changed or missing');
+    for(const t of account.trades)if(!Object.hasOwn(prior,t.id)&&t.orderId!==allowedOrderId)throw Error('Untracked account trade');
+  }
+  checkInventory(account,changedToken=null) {
     const knownOrders=new Set(this.db.prepare('SELECT order_id FROM live_intents WHERE order_id IS NOT NULL').all().map(r=>r.order_id));
     if(account.orders.some(o=>!knownOrders.has(o.id))) throw Error('Untracked open order');
     const inventory=this.db.prepare('SELECT * FROM live_inventory').all();
     const actual=new Map(account.positions.map(p=>[p.token,p]));
     if(actual.size!==account.positions.length) throw Error('Duplicate position rows');
-    for(const p of inventory) if(!actual.has(p.token)||Math.abs(actual.get(p.token).shares-p.shares)>.00011) throw Error('Inventory reconciliation required');
-    if(account.positions.some(p=>!inventory.some(i=>i.token===p.token))) throw Error('Untracked account position');
+    for(const p of inventory) if(p.token!==changedToken&&(!actual.has(p.token)||actual.get(p.token).market!==p.market||Math.abs(actual.get(p.token).shares-p.shares)>.00011)) throw Error('Inventory reconciliation required');
+    if(account.positions.some(p=>p.token!==changedToken&&!inventory.some(i=>i.token===p.token))) throw Error('Untracked account position');
+  }
+  checkAccount(account) {
+    validateAccount(account,this.now());
+    this.checkTradeHistory(account);this.checkInventory(account);
     if(Math.abs(account.cash-this.get('lastCash',account.cash))>.00002) throw Error('Cash reconciliation required');
   }
   reserve(plan,account,approval) {
@@ -240,9 +261,11 @@ class LiveLedger {
       if(!row||!['SENDING','UNKNOWN','OPEN','PARTIAL','CANCEL_PENDING'].includes(row.state)||row.order_id!==proof.orderId) throw Error('Unknown fill');
       if(proof.shares>row.shares+.000001) throw Error('Fill exceeds request');
       if(account.orders.some(o=>o.id===row.order_id)) throw Error('Order still open');
+      this.checkTradeHistory(account,row.order_id);this.checkInventory(account,row.token);
       const before=this.get('lastCash');
       const position=account.positions.find(p=>p.token===row.token);
       const old=this.db.prepare('SELECT * FROM live_inventory WHERE token=?').get(row.token);
+      if(position&&position.market!==row.market)throw Error('Fill market identity mismatch');
       if(row.side==='BUY') {
         if(proof.cash>row.reserve+.00001 || Math.abs(account.cash-(before-proof.cash))>.00002) throw Error('Buy cash mismatch');
         if(!position||Math.abs(position.shares-((old?.shares||0)+proof.shares))>.00011) throw Error('Buy inventory mismatch');
@@ -258,6 +281,7 @@ class LiveLedger {
         this.db.prepare('INSERT INTO live_realized VALUES(?,?,?)').run(id,new Date(this.now()).toISOString(),money(proof.cash-cost));
       }
       this.put('lastCash',account.cash);
+      this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.db.prepare("UPDATE live_intents SET state='CONFIRMED',filled_shares=?,actual_cash=?,finished_at=? WHERE id=?")
         .run(proof.shares,proof.cash,new Date(this.now()).toISOString(),id);
       this.event(id,'FILL_CONFIRMED',{shares:proof.shares,cash:proof.cash});

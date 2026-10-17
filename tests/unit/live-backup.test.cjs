@@ -51,3 +51,26 @@ test('a corrupt source cannot overwrite the previous valid live snapshot',t=>{
     assert.equal(prior.prepare('SELECT COUNT(*) count FROM live_intents').get().count,1);
   }finally{prior.close();}
 });
+
+test('hard process termination after durable SENDING cannot erase or replay a possible submission',t=>{
+  const s=fixture(t);s.ledger.close();
+  const modulePath=resolve(__dirname,'../../ops/autonomy/live-ledger.cjs');
+  const child=spawnSync(process.execPath,['-e',`
+    const {LiveLedger}=require(${JSON.stringify(modulePath)});
+    const ledger=new LiveLedger(${JSON.stringify(s.source)});
+    if(ledger.summary().pending!==1)process.exit(2);
+    ledger.event(null,'SIMULATED_EXCHANGE_ACCEPTANCE');
+    process.kill(process.pid,'SIGKILL');
+  `],{encoding:'utf8'});
+  assert.notEqual(child.status,0);
+  const restored=new LiveLedger(s.source);
+  try {
+    assert.equal(restored.db.pragma('integrity_check',{simple:true}),'ok');
+    assert.equal(restored.db.prepare('SELECT state FROM live_intents').get().state,'SENDING');
+    assert.equal(restored.db.prepare("SELECT COUNT(*) n FROM live_events WHERE kind='SIMULATED_EXCHANGE_ACCEPTANCE'").get().n,1);
+    restored.recoverAfterRestart();
+    assert.equal(restored.mode(),'halted');assert.equal(restored.summary().pending,1);
+    assert.equal(restored.summary().reserved,1.23841);
+    assert.equal(restored.db.prepare('SELECT state FROM live_intents').get().state,'UNKNOWN');
+  }finally{restored.close();}
+});

@@ -31,10 +31,7 @@ class PolymarketReader {
     for(let page=0;page<10;page++) {
       if(seen.has(cursor))throw Error('Pagination loop');seen.add(cursor);
       const data=await this.get('https://clob.polymarket.com'+path+'?next_cursor='+encodeURIComponent(cursor),true);
-      if(Array.isArray(data)) {
-        if(data.length>=500)throw Error('Incomplete legacy collection');
-        return rows.concat(data);
-      }
+      if(Array.isArray(data))throw Error('Collection has no completion cursor');
       if(!data||!Array.isArray(data.data)||typeof data.next_cursor!=='string')throw Error('Incomplete account pagination');
       rows.push(...data.data);
       if(data.next_cursor==='LTE=')return rows;
@@ -88,9 +85,16 @@ class PolymarketReader {
       return {id:o.id,token:o.asset_id,side:o.side,remaining:size-matched,price:number(o.price,'order price',.000001,.999999)};
     });
     const normalizedTrades=trades.map(t=>{
-      if(typeof t.id!=='string'||typeof t.taker_order_id!=='string'||!['MATCHED','MINED','CONFIRMED','RETRYING','FAILED'].includes(t.status))throw Error('Unknown trade schema');
-      return {id:t.id,orderId:t.taker_order_id,status:t.status,token:String(t.asset_id),side:t.side,
-        shares:number(t.size,'trade size'),price:number(t.price,'trade price',0,1)};
+      const status=typeof t.status==='string'?t.status.replace(/^TRADE_STATUS_/,''):null;
+      // This starter sends FOK taker orders only. Never attribute a maker's trade
+      // to taker_order_id; maker_orders require a separate reviewed adapter.
+      if(typeof t.id!=='string'||!t.id||typeof t.taker_order_id!=='string'||!t.taker_order_id
+        ||t.trader_side!=='TAKER'||!['BUY','SELL'].includes(t.side)||typeof t.asset_id!=='string'
+        ||typeof t.market!=='string'||!['MATCHED','MINED','CONFIRMED','RETRYING','FAILED'].includes(status))throw Error('Unknown or unsupported trade schema');
+      if(status==='CONFIRMED'&&!/^0x[0-9a-fA-F]{64}$/.test(t.transaction_hash||''))throw Error('Confirmed trade transaction missing');
+      return {id:t.id,orderId:t.taker_order_id,status,token:t.asset_id,side:t.side,market:t.market,
+        traderSide:t.trader_side,transactionHash:t.transaction_hash||null,
+        shares:number(t.size,'trade size',.000001),price:number(t.price,'trade price',.000001,.999999)};
     });
     return validateAccount({at,cash:number(balance.balance,'collateral')/1e6,
       allowance:Math.max(...allowanceValues.map(v=>number(v,'allowance')))/1e6,

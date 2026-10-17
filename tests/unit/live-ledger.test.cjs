@@ -32,6 +32,18 @@ test('live mode defaults disabled, file is private and activation is explicit',t
   s.activate();assert.equal(s.ledger.mode(),'manual');assert.deepEqual(s.ledger.summary().limits,STARTER);
   assert.throws(()=>s.activate(),/cannot be reset/);
 });
+
+test('historical trades are immutable across activation and a flat-account round trip cannot be ignored',t=>{
+  const s=setup(t);
+  const trade={id:'historic',orderId:'old',token:'other',side:'BUY',shares:1,price:.2,status:'CONFIRMED'};
+  const account={...s.account(),trades:[trade]};
+  assert.throws(()=>s.ledger.activate({...account,trades:[{...trade,status:'MINED'}]},s.owner),/Unsettled/);
+  s.ledger.activate(account,s.owner);s.ledger.checkAccount(account);
+  assert.throws(()=>s.ledger.checkAccount({...account,trades:[]}),/Historical trade/);
+  assert.throws(()=>s.ledger.checkAccount({...account,trades:[{...trade,price:.3}]}),/Historical trade/);
+  assert.throws(()=>s.ledger.checkAccount({...account,trades:[trade,{...trade,id:'new',orderId:'outside'}]}),/Untracked account trade/);
+  assert.equal(s.ledger.summary().realized,0);
+});
 test('unknown, stale, geographically restricted or non-flat account cannot activate',t=>{
   const s=setup(t);
   for(const changes of [{cash:19},{allowance:0},{exhaustive:false},{at:'2020-01-01'},
@@ -184,7 +196,7 @@ test('fees deducted from received shares do not create fictitious inventory',t=>
 test('zero-fill cancellation cannot discard a fill that already reached the account',t=>{
   const s=setup(t);s.activate();const id=s.submit(s.plan());
   s.ledger.acknowledge(id,'0x'+'a'.repeat(64),'OPEN');s.ledger.cancelRequested(id);
-  const account={...s.account(),trades:[{orderId:'0x'+'a'.repeat(64),status:'CONFIRMED'}]};
+  const account={...s.account(),trades:[{id:'race',orderId:'0x'+'a'.repeat(64),status:'CONFIRMED',token:'token',side:'BUY',shares:6,price:.2}]};
   assert.throws(()=>s.ledger.confirmUnfilledCancellation(id,{orderId:'0x'+'a'.repeat(64),status:'CANCELED',sizeMatched:0,authenticated:true},account),/raced/);
   assert.equal(s.ledger.summary().pending,1);
 });

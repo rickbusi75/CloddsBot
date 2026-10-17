@@ -95,7 +95,8 @@ test('a mismatched exchange acknowledgement halts rather than trusting an unrela
 });
 test('a confirmed trade and reflected balances are required before booking an actual fill',async t=>{
   const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
-  const trade={id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'MINED',shares:6,price:.2};
+  const trade={id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'MINED',shares:6,price:.2,
+    market:s.plan.market,traderSide:'TAKER',transactionHash:'0x'+'c'.repeat(64)};
   s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
   s.setAccount({trades:[trade]});
   assert.equal((await s.transport.reconcile(r.intent)).state,'AWAITING_CONFIRMATION');
@@ -123,7 +124,63 @@ test('fill arriving during cancellation is reconciled as a fill, never discarded
   s.ledger.cancelRequested(r.intent);
   s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
   s.setAccount({cash:19.046434,positions:[{token:s.plan.token,market:s.plan.market,shares:6,cost:1.2384,bidValue:1.14}],
-    trades:[{id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'CONFIRMED',shares:6,price:.2}]});
+    trades:[{id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'CONFIRMED',shares:6,price:.2,
+      market:s.plan.market,traderSide:'TAKER',transactionHash:'0x'+'c'.repeat(64)}]});
   assert.equal((await s.transport.reconcile(r.intent)).state,'CONFIRMED');
   assert.equal(s.ledger.summary().exposure,1.2384);
+});
+
+test('a simultaneous withdrawal cannot be booked as extra cost within the reservation',async t=>{
+  const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
+  s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
+  // Better execution costs 1.10 plus fees, but a simultaneous withdrawal makes
+  // the observed delta 1.20: below the reservation, yet unrelated to this trade.
+  s.setAccount({cash:19.084834,positions:[{token:s.plan.token,market:s.plan.market,shares:6,cost:1.2,bidValue:1.14}],
+    trades:[{id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'CONFIRMED',shares:6,price:1.1/6,
+      market:s.plan.market,traderSide:'TAKER',transactionHash:'0x'+'c'.repeat(64)}]});
+  await assert.rejects(s.transport.reconcile(r.intent),/economics mismatch/);
+  assert.equal(s.ledger.mode(),'halted');assert.equal(s.ledger.summary().pending,1);
+  assert.equal(s.ledger.summary().exposure,0);
+});
+
+test('unrelated completed trades cannot hide behind a flat position and unchanged cash',async t=>{
+  const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
+  s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
+  s.setAccount({trades:[{id:'external',orderId:'external-order',token:'other',side:'BUY',status:'CONFIRMED',shares:1,price:.2}]});
+  await assert.rejects(s.transport.reconcile(r.intent),/Untracked account trade/);
+  assert.equal(s.ledger.summary().pending,1);assert.equal(s.ledger.summary().realized,0);
+});
+
+test('fees withheld from received shares reconcile without rounding away residual holdings',async t=>{
+  const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
+  s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
+  s.setAccount({cash:19.084834,positions:[{token:s.plan.token,market:s.plan.market,shares:5.808,cost:1.2,bidValue:1.1}],
+    trades:[{id:'trade',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'CONFIRMED',shares:6,price:.2,
+      market:s.plan.market,traderSide:'TAKER',transactionHash:'0x'+'c'.repeat(64)}]});
+  assert.equal((await s.transport.reconcile(r.intent)).state,'CONFIRMED');
+  assert.equal(s.ledger.db.prepare('SELECT shares FROM live_inventory').get().shares,5.808);
+  s.ledger.checkAccount(s.account());
+});
+
+test('buy and exit reconciliation books only trade proceeds and refuses a simultaneous deposit as profit',async t=>{
+  const s=fixture(t);const r=await s.transport.submit(s.preview,planHash(s.plan),s.owner);
+  const buy={id:'buy',orderId:r.orderId,token:s.plan.token,side:'BUY',status:'CONFIRMED',shares:6,price:.2,
+    market:s.plan.market,traderSide:'TAKER',transactionHash:'0x'+'c'.repeat(64)};
+  s.setOrder({id:r.orderId,asset_id:s.plan.token,market:s.plan.market,side:'BUY',status:'MATCHED',size_matched:'6'});
+  s.setAccount({cash:19.046434,positions:[{token:s.plan.token,market:s.plan.market,shares:6,cost:1.2384,bidValue:1.14}],trades:[buy]});
+  await s.transport.reconcile(r.intent);
+  const sellPlan={...s.plan,side:'SELL',price:.19};
+  const id=s.ledger.reserve(sellPlan,s.account(),planHash(sellPlan)),orderId='0x'+'b'.repeat(64);
+  s.ledger.signed(id,orderId);s.ledger.sending(id,s.account());s.ledger.acknowledge(id,orderId,'FILLED');
+  s.setOrder({id:orderId,asset_id:s.plan.token,market:s.plan.market,side:'SELL',status:'MATCHED',size_matched:'6'});
+  const sell={...buy,id:'sell',orderId,side:'SELL',price:.19};
+  // 1.14 gross minus fee rounded to five decimals: 1.10306.
+  s.setAccount({cash:20.649494,positions:[],trades:[buy,sell]});
+  await assert.rejects(s.transport.reconcile(id),/economics mismatch/);
+  assert.equal(s.ledger.summary().realized,0);assert.equal(s.ledger.summary().pending,1);
+  s.setAccount({cash:20.149494});
+  assert.equal((await s.transport.reconcile(id)).state,'CONFIRMED');
+  assert.equal(s.ledger.summary().realized,-.13534);assert.equal(s.ledger.summary().dailyLoss,.13534);
+  assert.equal(s.ledger.summary().exposure,0);s.ledger.checkAccount(s.account());
+  assert.equal(s.ledger.mode(),'halted');
 });

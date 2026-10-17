@@ -53,6 +53,7 @@ test('pagination checks every page and refuses ambiguous completion or a cursor 
   assert.deepEqual((await s.client.pages('/data/orders')).map(r=>r.id),['one','two']);
   await assert.rejects(reader({'/data/orders':{data:[],next_cursor:'MA=='}}).client.pages('/data/orders'),/loop/);
   await assert.rejects(reader({'/data/orders':{data:[]}}).client.pages('/data/orders'),/pagination/);
+  await assert.rejects(reader({'/data/orders':[]}).client.pages('/data/orders'),/completion cursor/);
 });
 test('API outages, invalid schemas and missing geoblock do not become an empty account',async()=>{
   for(const overrides of [{'/data/orders':new Response('',{status:503})},{'/positions':{error:'unknown'}},
@@ -60,6 +61,19 @@ test('API outages, invalid schemas and missing geoblock do not become an empty a
     {'/balance-allowance':{balance:null,allowance:'10000000'}}]) {
     await assert.rejects(reader(overrides).client.account());
   }
+});
+
+test('confirmed taker trades retain transaction identity; maker attribution and duplicate trades fail closed',async()=>{
+  const trade={id:'trade',taker_order_id:'order',market:condition,asset_id:'token',side:'BUY',size:'6',price:'.2',
+    status:'TRADE_STATUS_CONFIRMED',trader_side:'TAKER',transaction_hash:'0x'+'c'.repeat(64)};
+  const result=await reader({'/data/trades':{data:[trade],next_cursor:'LTE='}}).client.account();
+  assert.equal(result.trades[0].status,'CONFIRMED');assert.equal(result.trades[0].orderId,'order');
+  assert.equal(result.trades[0].transactionHash,trade.transaction_hash);
+  for(const t of [{...trade,trader_side:'MAKER',maker_orders:[{order_id:'owned-maker'}]},
+    {...trade,transaction_hash:null},{...trade,side:'unknown'}]) {
+    await assert.rejects(reader({'/data/trades':{data:[t],next_cursor:'LTE='}}).client.account());
+  }
+  await assert.rejects(reader({'/data/trades':{data:[trade,trade],next_cursor:'LTE='}}).client.account(),/duplicate trade/);
 });
 test('stale or insufficient-depth position marks block account valuation',async()=>{
   const p={asset:'token',conditionId:condition,size:6,avgPrice:.2};

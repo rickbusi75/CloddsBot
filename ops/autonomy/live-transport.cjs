@@ -1,6 +1,24 @@
 'use strict';
 const {planHash,validateAccount}=require('./live-ledger.cjs');
 
+function verifyFillEconomics(plan,trades,shares,cash) {
+  let gross=0,fees=0,netShares=0,total=0;
+  for(const t of trades) {
+    if(t.traderSide!=='TAKER'||t.market!==plan.market||!/^0x[0-9a-fA-F]{64}$/.test(t.transactionHash||''))throw Error('Unsupported or unverified fill attribution');
+    if(plan.side==='BUY'?t.price>plan.price+1e-9:t.price<plan.price-1e-9)throw Error('Fill price violates approval');
+    const fee=Math.round(t.shares*plan.feeRate*t.price*(1-t.price)*1e5)/1e5;
+    gross+=t.shares*t.price;fees+=fee;total+=t.shares;netShares+=t.shares-fee/t.price;
+  }
+  const tolerance=.00002*Math.max(1,trades.length);
+  const near=(a,b)=>Math.abs(a-b)<=tolerance;
+  // Support only these two accounting forms. A deposit/withdrawal
+  // must not silently become order proceeds, cost, or fees.
+  const valid=plan.side==='BUY'?
+    (near(cash,gross+fees)&&near(shares,total))||(near(cash,gross)&&near(shares,netShares)):
+    near(cash,gross-fees)&&near(shares,total);
+  if(!valid)throw Error('Fill economics mismatch; external cashflow or unsupported fees');
+}
+
 function orderHash(body,domain) {
   const {TypedDataEncoder}=require('ethers');
   const types={Order:[['salt','uint256'],['maker','address'],['signer','address'],['tokenId','uint256'],
@@ -102,6 +120,9 @@ class LiveTransport {
     const matched=Number(order.size_matched);
     if(!Number.isFinite(matched)||matched<0||matched>row.shares+.000001)throw Error('Invalid matched quantity');
     const account=await this.reader.account();
+    validateAccount(account,this.ledger.now());
+    this.ledger.checkTradeHistory(account,row.order_id);
+    this.ledger.checkInventory(account,row.token);
     if(account.orders.some(o=>o.id===row.order_id))return {intent:id,state:'OPEN',matched};
     if(order.status==='CANCELED'&&matched===0) {
       this.ledger.confirmUnfilledCancellation(id,{orderId:row.order_id,status:'CANCELED',sizeMatched:0,authenticated:true},account);
@@ -116,6 +137,8 @@ class LiveTransport {
     const shares=row.side==='BUY'?(actual?.shares||0)-(old?.shares||0):(old?.shares||0)-(actual?.shares||0);
     const cash=row.side==='BUY'?this.ledger.get('lastCash')-account.cash:account.cash-this.ledger.get('lastCash');
     if(shares<=0||shares>matched+.00011||cash<=0)return {intent:id,state:'AWAITING_ACCOUNT_BALANCES'};
+    try {verifyFillEconomics(JSON.parse(row.plan),trades,shares,cash);}
+    catch(error){this.ledger.halt('Fill economics or attribution requires review');throw error;}
     this.ledger.reconcileFill(id,{orderId:row.order_id,shares,cash,final:true,authenticated:true,accountReflected:true},account);
     return {intent:id,state:'CONFIRMED',shares,cash};
   }

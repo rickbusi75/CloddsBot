@@ -31,6 +31,18 @@ can authorize a submission.
 signed amounts and EIP-712 hash must match the approved plan. Exchange acceptance
 alone cannot release risk. Account inventory and cash, authenticated order data,
 and confirmed trades must agree. Cancellation alone does not prove no fill.
+Trade-history fingerprints are persisted with the account baseline and each
+confirmed fill. Missing/changed history, duplicate trades, unrelated completed
+trades and untracked holdings block reconciliation even if cash and exposure
+appear unchanged. Account pagination requires an explicit completion cursor.
+The reader supports TAKER trades only: a MAKER record is rejected rather than
+misattributed to the taker order. Confirmed records require a transaction hash;
+this is authenticated API evidence, not an independently verified chain receipt.
+Before booking a fill, execution prices, fee-rounded proceeds/cost and received
+shares must agree with the approved order and observed balances. Unexpected
+cashflows retain the reservation and halt new entries. Equal offsetting external
+cashflows cannot be ruled out by balance differences alone; authoritative chain
+activity and external-movement handling remain a deployment prerequisite.
 The current signer supports only cent prices and two-decimal share quantities;
 unsupported precision is rejected rather than silently rounded. Fees withheld
 from received shares are recorded as actual net inventory. Small residual shares
@@ -57,6 +69,11 @@ of outside cashflows and maker trades, source/strategy validation, settlement an
 Deposit Wallet redemption, account-latency and real-exchange tests, exposure and
 currency checks, emergency cancellation and notifications. Actual activation and
 real-money transactions remain actions for the human operator.
+
+Current isolated ARM64 coverage: 46 tests, including an abrupt SIGKILL with an
+outstanding SENDING record, recovery without replay, and simulated purchase/exit
+with a deposit that must not be recorded as profit. These tests use no real keys
+or network requests and do not validate exchange execution or profitability.
 
 Primary protocol references:
 
