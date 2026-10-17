@@ -104,6 +104,12 @@ and recovery sends one confirmation. This does not require a running bot contain
 or an AI call. The host itself being offline still requires external monitoring.
 ops/autonomy/backup-observer.py creates the coherent dump used by lab-backup.
 
+The watchdog also checks the Gluetun health state in VPN mode. After three failed
+checks it can recreate only the CloddsBot VPN/bot pair, at most once per hour,
+then restart the observer. It preserves VPN mode and existing relay filters,
+never falls back to direct access, and respects a stopped observer or exited bot.
+The private deployment uses several Spanish relays to avoid a single-relay outage.
+
 ## Live trading gate
 
 Rick approved a future EUR 200 capital with limits EUR 5/order, EUR 30 total exposure,
