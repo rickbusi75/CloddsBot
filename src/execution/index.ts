@@ -721,6 +721,13 @@ export async function getPolymarketPositions(
       outcome?: string;
     }>;
 
+    if (!Array.isArray(data) || data.some(p => !p || typeof p.asset !== 'string' || !p.asset
+      || typeof p.conditionId !== 'string' || !p.conditionId
+      || !Number.isFinite(p.size) || p.size! < 0
+      || !Number.isFinite(p.avgPrice) || p.avgPrice! < 0 || p.avgPrice! > 1
+      || !Number.isFinite(p.curPrice) || p.curPrice! < 0 || p.curPrice! > 1)) {
+      throw new Error('Unknown position schema');
+    }
     return data.map(p => ({
       tokenId: p.asset || '',
       conditionId: p.conditionId || '',
@@ -733,8 +740,9 @@ export async function getPolymarketPositions(
       currentValue: p.currentValue,
     }));
   } catch (error) {
-    logger.error({ error, walletAddress: walletAddress }, 'Failed to fetch Polymarket positions');
-    return [];
+    // An outage or malformed payload must never look like zero account exposure.
+    logger.warn('Unable to verify Polymarket positions');
+    throw new Error('Polymarket positions unavailable; exposure unknown');
   }
 }
 
