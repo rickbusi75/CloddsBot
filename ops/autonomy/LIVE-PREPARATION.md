@@ -45,8 +45,14 @@ send an order, redeem, transfer, or change private configuration. It reports a
 filtered account snapshot. Signing/submission classes are library code; only
 isolated fixtures and a public dummy key have exercised them so far.
 
+The snapshot helper can now atomically back up both observer.sqlite and live.sqlite
+when present. Tests restore a ledger with an outstanding WAL-backed submission,
+verify that it stays reserved/unknown after restart, and preserve the previous
+good dump when a source is corrupt. Installing the updated helper and excluding
+the active live.sqlite/WAL from the host archive still belong to deployment.
+
 Before adding operator controls or enabling an execution service, finish and
-review: persistent backup/restore for the separate ledger, authoritative handling
+review: installation of the separate ledger backup, authoritative handling
 of outside cashflows and maker trades, source/strategy validation, settlement and
 Deposit Wallet redemption, account-latency and real-exchange tests, exposure and
 currency checks, emergency cancellation and notifications. Actual activation and
