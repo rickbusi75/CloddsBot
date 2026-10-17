@@ -16,7 +16,13 @@ export function enforceMaxOrderSize(
   label: string
 ): string | null {
   const maxOrderSize = context.tradingContext?.maxOrderSize;
-  if (!maxOrderSize || !Number.isFinite(notional)) return null;
+  if (!Number.isFinite(notional) || notional <= 0) {
+    return JSON.stringify({ error: 'Invalid order notional', detail: label });
+  }
+  if (maxOrderSize === undefined) return null;
+  if (!Number.isFinite(maxOrderSize) || maxOrderSize < 0) {
+    return JSON.stringify({ error: 'Invalid maxOrderSize', detail: label });
+  }
   if (notional <= maxOrderSize) return null;
   return JSON.stringify({
     error: 'Order exceeds maxOrderSize',

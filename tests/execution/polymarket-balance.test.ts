@@ -1,11 +1,26 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPolymarketBalance, createExecutionService } from '../../src/execution';
+import { getPolymarketBalance, getPolymarketPositions, createExecutionService } from '../../src/execution';
 import { Wallet } from 'ethers';
 import { buildPolymarketHmacSignature } from '../../src/utils/polymarket-auth';
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 const auth = { address: '0x2222222222222222222222222222222222222222', apiKey: 'test', apiSecret: Buffer.from('test').toString('base64'), apiPassphrase: 'test', signatureType: 3 };
+test('position API failure or malformed exposure never reports an empty account', async () => {
+  for (const payload of [new Response('', { status: 503 }), new Response('{"error":"unavailable"}'),
+    new Response('[{"asset":"token","conditionId":"condition","size":null,"avgPrice":0.5,"curPrice":0.5}]')]) {
+    globalThis.fetch = async () => payload;
+    await assert.rejects(getPolymarketPositions(auth), /exposure unknown/);
+  }
+});
+test('only a successful position response can report an empty account or validated holdings', async () => {
+  globalThis.fetch = async () => new Response('[]');
+  assert.deepEqual(await getPolymarketPositions(auth), []);
+  globalThis.fetch = async () => new Response('[{"asset":"token","conditionId":"condition","size":10,"avgPrice":0.4,"curPrice":0.5,"cashPnl":1}]');
+  const positions = await getPolymarketPositions(auth);
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].size * positions[0].avgPrice, 4);
+});
 test('Deposit Wallet collateral uses type 3 and reads plural allowances in six-decimal units', async () => {
   globalThis.fetch = async input => {
     const url = new URL(String(input));

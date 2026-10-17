@@ -51,7 +51,7 @@ test('enforceMaxOrderSize blocks oversized order', () => {
   assert.equal(payload.notional, 150);
 });
 
-test('enforceMaxOrderSize allows small or invalid notional', () => {
+test('enforceMaxOrderSize allows a valid small order and rejects invalid notional', () => {
   const ctx = {
     tradingContext: { maxOrderSize: 100 },
     db: {
@@ -61,7 +61,26 @@ test('enforceMaxOrderSize allows small or invalid notional', () => {
   };
 
   assert.equal(enforceMaxOrderSize(ctx, 50, 'ok'), null);
-  assert.equal(enforceMaxOrderSize(ctx, Number.NaN, 'nan'), null);
+  for (const invalid of [Number.NaN, Infinity, -Infinity, 0, -1]) {
+    const result = enforceMaxOrderSize(ctx, invalid, 'invalid');
+    assert.equal(JSON.parse(result!).error, 'Invalid order notional');
+  }
+});
+
+test('enforceMaxOrderSize preserves an explicit zero limit', () => {
+  const ctx = { tradingContext: { maxOrderSize: 0 }, db: { getUser: () => undefined, getPositions: () => [] } };
+  const result = enforceMaxOrderSize(ctx, .01, 'zero-limit');
+  assert.equal(JSON.parse(result!).error, 'Order exceeds maxOrderSize');
+  assert.equal(JSON.parse(result!).maxOrderSize, 0);
+});
+
+test('enforceMaxOrderSize distinguishes an absent limit from a corrupt limit', () => {
+  const db = { getUser: () => undefined, getPositions: () => [] };
+  assert.equal(enforceMaxOrderSize({ db }, 1, 'absent'), null);
+  assert.equal(JSON.parse(enforceMaxOrderSize({ db }, Number.NaN, 'absent')!).error, 'Invalid order notional');
+  for (const limit of [Number.NaN, Infinity, -1]) {
+    assert.equal(JSON.parse(enforceMaxOrderSize({ db, tradingContext: { maxOrderSize: limit } }, 1, 'corrupt')!).error, 'Invalid maxOrderSize');
+  }
 });
 
 test('enforceExposureLimits blocks maxTotalExposure', () => {
