@@ -40,10 +40,10 @@ async function handleSearch(query: string): Promise<string> {
       ? `**Metaculus Questions** (showing default results — use \`/mc search <query>\` to filter)\n\n`
       : `**Metaculus Questions** (${markets.length} results)\n\n`;
     for (const market of markets.slice(0, 15)) {
-      const probability = market.outcomes[0]?.price ?? 0.5;
+      const probability = market.outcomes[0]?.price;
       output += `**${market.question}**\n`;
       output += `  ID: \`${market.id}\`\n`;
-      output += `  Probability: ${(probability * 100).toFixed(0)}%\n`;
+      output += `  Probability: ${probability === undefined ? 'Unavailable (API access restricted)' : (probability * 100).toFixed(0) + '%'}\n`;
       output += `  Predictions: ${market.volume24h.toLocaleString()}\n`;
       if (market.endDate) {
         output += `  Closes: ${market.endDate.toLocaleDateString()}\n`;
@@ -65,11 +65,11 @@ async function handleQuestion(questionId: string): Promise<string> {
       return `Question ${questionId} not found.`;
     }
 
-    const probability = market.outcomes[0]?.price ?? 0.5;
+    const probability = market.outcomes[0]?.price;
 
     let output = `**${market.question}**\n\n`;
     output += `ID: \`${market.id}\`\n`;
-    output += `Community Prediction: **${(probability * 100).toFixed(1)}%**\n`;
+    output += `Community Prediction: **${probability === undefined ? 'Unavailable (API access restricted)' : (probability * 100).toFixed(1) + '%'}**\n`;
     output += `Predictions: ${market.volume24h.toLocaleString()}\n`;
 
     if (market.endDate) {
@@ -128,9 +128,9 @@ async function handleTournament(tournamentId: string): Promise<string> {
 
     let output = `**Tournament ${tournamentId} Questions** (${markets.length})\n\n`;
     for (const market of markets) {
-      const probability = market.outcomes[0]?.price ?? 0.5;
+      const probability = market.outcomes[0]?.price;
       output += `**${market.question}**\n`;
-      output += `  ID: \`${market.id}\` | Prob: ${(probability * 100).toFixed(0)}%\n\n`;
+      output += `  ID: \`${market.id}\` | Prob: ${probability === undefined ? 'Unavailable (API access restricted)' : (probability * 100).toFixed(0) + '%'}\n\n`;
     }
     return output;
   } catch (error) {
