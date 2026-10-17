@@ -533,12 +533,24 @@ def load_env(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['daemon', 'once', 'status', 'pause', 'resume', 'report', 'stop'])
+    parser.add_argument('command', choices=['daemon', 'once', 'status', 'pause', 'resume', 'report', 'stop', 'ready'])
     parser.add_argument('--data', default='/data/autonomy')
     parser.add_argument('--env', default='/app/.env')
     parser.add_argument('--config', default='/config/clodds.json')
     args = parser.parse_args()
     os.umask(0o077)
+    if args.command == 'ready':
+        for _ in range(100):
+            try:
+                pid = int((Path(args.data) / 'worker.pid').read_text())
+                process = Path('/proc') / str(pid)
+                command = (process / 'cmdline').read_bytes().split(b'\0')
+                if os.fsencode(__file__) in command and b'daemon' in command and process.stat().st_uid == os.getuid():
+                    return
+            except (FileNotFoundError, ValueError):
+                pass
+            time.sleep(.1)
+        raise RuntimeError('Observer did not become ready')
     if args.command == 'stop':
         # docker exec's client can exit while its container process keeps running.
         # Stop only a verified observer daemon; never rely on an unverified PID file.

@@ -85,6 +85,7 @@ class ObserverTests(unittest.TestCase):
                         break
                     time.sleep(.02)
                 self.assertEqual(pidfile.read_text(), str(child.pid))
+                subprocess.run(command + ['ready'] + options, check=True, timeout=15)
                 duplicate = subprocess.run(command + ['daemon'] + options, capture_output=True, timeout=5)
                 self.assertNotEqual(duplicate.returncode, 0)
                 subprocess.run(command + ['stop'] + options, check=True, timeout=10)
