@@ -72,8 +72,9 @@ class ObserverTests(unittest.TestCase):
         self.assertAlmostEqual(other.ledger_cost(worker.utcnow().isoformat()[:10]), .55)
 
     def test_bad_controls_fail_closed(self):
-        (Path(self.tmp.name) / 'control.json').write_text('{broken')
-        self.assertTrue(self.observer.controls()['paused'])
+        for invalid in ('{broken', '[]', 'null', 'true', '1', '{"paused":"false"}'):
+            (Path(self.tmp.name) / 'control.json').write_text(invalid)
+            self.assertTrue(self.observer.controls()['paused'])
 
     def test_hourly_single_run_and_two_daily_digests_follow_paris_including_dst(self):
         (Path(self.tmp.name) / 'control.json').write_text('{"paused":true}')
@@ -176,14 +177,123 @@ class ObserverTests(unittest.TestCase):
         db = self.observer.db
         db.execute('INSERT INTO positions VALUES(1,"m","e","yes","YES","Example",10,5,.1,.49,NULL,?,NULL)', (worker.utcnow().isoformat(),))
         db.commit()
-        with patch.object(worker, 'request', side_effect=lambda url, **kw: ({'closed': True, 'outcomePrices': '[".99",".01"]'} if '/markets/' in url else self.book(), {})):
+        with patch.object(worker, 'request', side_effect=lambda url, **kw: ({'id': 'm', 'outcomes': '["Yes","No"]', 'closed': True, 'outcomePrices': '[".99",".01"]'} if '/markets/' in url else self.book(), {})):
             self.observer.reconcile()
         self.assertEqual(self.observer.portfolio()['open'], 1)
-        with patch.object(worker, 'request', return_value=({'umaResolutionStatus': 'resolved', 'outcomePrices': '["1","0"]'}, {})):
+        with patch.object(worker, 'request', return_value=({'id': 'm', 'outcomes': '["Yes","No"]', 'umaResolutionStatus': 'resolved', 'outcomePrices': '["1","0"]'}, {})):
             self.observer.reconcile()
         self.assertEqual(self.observer.portfolio()['open'], 0)
         self.assertAlmostEqual(self.observer.portfolio()['realized'], 4.9)
         self.assertAlmostEqual(self.observer.portfolio()['cash'], 204.9)
+
+    def test_abstained_forecast_scan_restart_final_outcome_and_market_comparison(self):
+        market = {'id': 'm', 'conditionId': 'c', 'active': True, 'closed': False,
+                  'acceptingOrders': True, 'enableOrderBook': True, 'question': 'Example',
+                  'endDate': (worker.utcnow() + dt.timedelta(days=2)).isoformat(),
+                  'outcomes': '["Yes","No"]', 'outcomePrices': '[".4",".6"]',
+                  'clobTokenIds': '["yes","no"]', 'liquidityNum': 2000, 'volume24hr': 2000}
+        decision = {'decision': 'ABSTAIN', 'outcome': 'NO', 'probability': .8, 'lowerBound': .7,
+                    'reason': 'Uncertain evidence', 'sources': []}
+        with patch.object(worker, 'request', return_value=([market], {})), \
+             patch.object(self.observer, 'evidence', return_value=[{'url': 'https://a.test'}, {'url': 'https://b.test'}]), \
+             patch.object(self.observer, 'analyze', return_value=decision):
+            self.assertEqual(self.observer.scan(), 'ok')
+            self.observer.scan()  # Same forecast cannot be inserted twice in the daily interval.
+        other = worker.Observer(self.tmp.name)
+        self.addCleanup(other.db.close)
+        self.assertEqual(other.forecast_metrics()['tracked'], 1)
+        self.assertEqual(other.forecast_metrics()['resolved'], 0)
+        self.assertEqual(other.portfolio()['open'], 0)
+        final = {'id': 'm', 'conditionId': 'c', 'outcomes': '["No","Yes"]',
+                 'outcomePrices': '["1","0"]', 'umaResolutionStatus': 'resolved'}
+        with patch.object(worker, 'request', return_value=(final, {})) as mocked:
+            other.evaluate_forecasts()
+            other.evaluate_forecasts()
+            self.assertEqual(mocked.call_count, 1)
+        metrics = other.forecast_metrics()
+        self.assertEqual((metrics['resolved'], metrics['markets']), (1, 1))
+        self.assertAlmostEqual(metrics['brier'], .04)
+        self.assertAlmostEqual(metrics['marketBrier'], .16)
+        self.assertIn('Brier IA 0.0400', other.report())
+        self.assertEqual(other.portfolio()['equity'], 200)
+
+    def test_final_result_requires_matching_market_condition_labels_and_finality(self):
+        market = {'id': 'm', 'conditionId': 'c', 'outcomes': '["No","Yes"]',
+                  'outcomePrices': '["0","1"]', 'umaResolutionStatus': 'resolved'}
+        self.assertEqual(worker.resolved_result(market, 'NO', 'm', 'c'), 0)
+        for key, value in [('umaResolutionStatus', 'proposed'), ('outcomePrices', '[".01",".99"]'),
+                           ('outcomes', '["Team A","Team B"]')]:
+            self.assertIsNone(worker.resolved_result({**market, key: value}, 'YES', 'm', 'c'))
+        for identity, condition in [('other', 'c'), ('m', 'other')]:
+            with self.assertRaises(ValueError):
+                worker.resolved_result(market, 'YES', identity, condition)
+
+    def test_forecast_checks_are_bounded_fair_cached_and_before_cutoff_daily(self):
+        decision = {'outcome': 'YES', 'probability': .6}
+        for i in range(12):
+            market = {'id': str(i // 2), 'end': (worker.utcnow() + dt.timedelta(days=2)).isoformat(), 'prices': [.5, .5]}
+            self.observer.record_forecast(i, market, decision, 'ABSTAIN_EVIDENCE')
+        self.observer.db.commit()
+        def response(url, **kw):
+            return {'id': url.rsplit('/', 1)[1], 'outcomes': '["Yes","No"]', 'outcomePrices': '[".5",".5"]'}, {}
+        with patch.object(worker, 'request', side_effect=response) as mocked:
+            self.observer.evaluate_forecasts()
+            self.assertEqual(self.observer.get('forecastEvaluation')['checked'], 10)
+            self.assertEqual(mocked.call_count, 5)  # Two forecasts per market share a public read.
+            self.observer.evaluate_forecasts()
+            self.assertEqual(self.observer.get('forecastEvaluation')['checked'], 2)
+            self.assertEqual(mocked.call_count, 6)
+            self.observer.evaluate_forecasts()
+            self.assertEqual(mocked.call_count, 6)
+        self.assertEqual(self.observer.forecast_metrics()['resolved'], 0)
+
+    def test_unavailable_position_does_not_block_other_settlement_and_blocks_new_risk(self):
+        db = self.observer.db
+        for i in range(2):
+            db.execute('INSERT INTO positions VALUES(?,?,?,?,?,?,?,?,?,?,NULL,?,NULL)',
+                       (i, str(i), str(i), 'yes', 'YES', 'Example', 10, 5, .1, .49, worker.utcnow().isoformat()))
+        db.commit()
+        def response(url, **kw):
+            identity = url.rsplit('/', 1)[1]
+            if identity == '0':
+                raise RuntimeError('HTTP 503')
+            return {'id': identity, 'outcomes': '["Yes","No"]',
+                    'outcomePrices': '["1","0"]', 'umaResolutionStatus': 'resolved'}, {}
+        with patch.object(worker, 'request', side_effect=response):
+            self.observer.reconcile()
+        self.assertEqual(self.observer.portfolio()['open'], 1)
+        self.assertAlmostEqual(self.observer.portfolio()['realized'], 4.9)
+        self.assertEqual(self.observer.get('reconciliation')['unavailable'], 1)
+        with patch.object(worker, 'request', side_effect=AssertionError('No new risk allowed')):
+            self.assertEqual(self.observer.paper_order({}, [], {}), 'PAPER_MARKS_UNAVAILABLE')
+        self.assertIn('valeur indicative', self.observer.report())
+
+    def test_paper_fill_loss_and_daily_circuit_breaker_survive_restart(self):
+        evidence = [{'url': 'https://a.com/one'}, {'url': 'https://b.com/two'}]
+        decision = {'decision': 'CANDIDATE', 'outcome': 'NO', 'probability': .9, 'lowerBound': .8,
+                    'rulesClear': True, 'independentPrimarySources': True, 'counterargument': 'Could fail',
+                    'sources': [e['url'] for e in evidence]}
+        with patch.object(worker, 'request', side_effect=lambda url, **kw: ({**self.book(), 'asset_id': 'no'} if '/book?' in url else {'fd': {'r': 0, 'e': 1}}, {})):
+            for i in range(3):
+                market = {'id': str(i), 'conditionId': 'c', 'event': str(i), 'tokens': ['yes', 'no'], 'question': 'Example'}
+                self.assertEqual(self.observer.paper_order(market, evidence, decision), 'PAPER_FILLED')
+        def final(url, **kw):
+            return {'id': url.rsplit('/', 1)[1], 'outcomes': '["Yes","No"]',
+                    'outcomePrices': '["1","0"]', 'umaResolutionStatus': 'resolved'}, {}
+        with patch.object(worker, 'request', side_effect=final):
+            self.observer.reconcile()
+        other = worker.Observer(self.tmp.name)
+        self.addCleanup(other.db.close)
+        self.assertEqual(other.portfolio()['cash'], 185)
+        self.assertEqual(other.portfolio()['dailyLoss'], 15)
+        self.assertEqual(other.portfolio()['open'], 0)
+        with patch.object(worker, 'request', side_effect=AssertionError('Daily loss stop')):
+            self.assertEqual(other.paper_order({}, [], {}), 'PAPER_RISK_STOP')
+
+    def test_malformed_source_lists_abstain_without_crashing(self):
+        for sources in ('https://example.com', [{'url': 'https://example.com'}], None):
+            with patch.object(worker, 'request', side_effect=AssertionError('No request')):
+                self.assertEqual(self.observer.paper_order({}, [], {'sources': sources}), 'ABSTAIN_EVIDENCE')
 
     def test_outbox_retry_then_dedup(self):
         self.observer.env = {'TELEGRAM_BOT_TOKEN': 'test'}

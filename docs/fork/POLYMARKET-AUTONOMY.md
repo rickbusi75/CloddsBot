@@ -108,7 +108,32 @@ The watchdog also checks the Gluetun health state in VPN mode. After three faile
 checks it can recreate only the CloddsBot VPN/bot pair, at most once per hour,
 then restart the observer. It preserves VPN mode and existing relay filters,
 never falls back to direct access, and respects a stopped observer or exited bot.
-The private deployment uses several Spanish relays to avoid a single-relay outage.
+The private deployment uses Rick's requested Madrid relay es-mad-wg-102. A fixed
+relay can be unavailable; recovery keeps that choice and reports persistent failure.
+
+## Forecast validation and unavailable position marks
+
+New research records every valid chosen-outcome probability, including abstentions,
+with the contemporaneous Gamma indicative price, cutoff, action and model. It never
+invents a historical baseline for older research. The forecasts table adds to the
+existing journal; all original positions, costs and research remain intact.
+
+An hourly evaluator reads at most ten public markets (15-second request timeout),
+sharing reads for repeated forecasts. Pending markets are checked daily before
+cutoff and hourly after cutoff, oldest check first. Identity, condition ID, outcome
+labels, final UMA resolution and exact binary payouts must agree before scoring.
+Missing data remains pending and gets a later check; it is never scored as a loss.
+
+The Brier score is mean (probability - binary result)^2, compared with the same
+score for the recorded market price; lower is better. Telegram displays the counts
+and both scores once final outcomes exist. Repeated forecasts and correlated events
+are not independent samples. These descriptive scores do not demonstrate profit,
+validate probability calibration, or automatically unlock real trading.
+
+Each open paper position reconciles independently. An unavailable, stale or wrong
+book keeps its last known mark, visibly labels equity as indicative, and blocks new
+paper exposure until all open positions can be marked or finally settled. Other
+positions continue reconciling. Final payouts match outcome labels and market ID.
 
 ## Live trading gate
 
