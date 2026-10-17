@@ -1,0 +1,15 @@
+[Unit]
+Description=CloddsBot public research and paper portfolio
+After=docker.service
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker exec cloddsbot-bot-1 python3 -u /app/ops/autonomy/worker.py daemon
+Restart=always
+RestartSec=30
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

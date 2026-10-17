@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { createBudgetFetch } from './spending';
 
 export type AiProvider = 'anthropic' | 'openrouter';
 
@@ -38,7 +39,7 @@ export function createAgentClient(env: NodeJS.ProcessEnv = process.env, fetchImp
         apiKey: provider === 'openrouter' ? null : key,
         authToken: provider === 'openrouter' ? key : null,
         baseURL: provider === 'openrouter' ? 'https://openrouter.ai/api' : 'https://api.anthropic.com',
-        ...(fetchImpl ? { fetch: fetchImpl } : {}),
+        ...((fetchImpl || env.CLODDS_AI_BUDGET_ENABLED === 'true') ? { fetch: createBudgetFetch(env, fetchImpl) } : {}),
       });
       signature = nextSignature;
     }
