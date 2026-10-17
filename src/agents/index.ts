@@ -4,6 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { metaculusSearch, metaculusPost, metaculusSummary } from '../feeds/metaculus/api';
 import { createAgentClient, getAiProvider } from '../providers/agent-client';
 import { spawn, spawnSync, ChildProcess, execSync, execFileSync } from 'child_process';
 import { randomUUID, createHash } from 'crypto';
@@ -12072,92 +12073,38 @@ async function executeTool(
       // ============================================
 
       case 'metaculus_search': {
-        const query = toolInput.query as string;
-        const status = (toolInput.status as string) || 'open';
-        const limit = (toolInput.limit as number) || 20;
         try {
-          const params = new URLSearchParams({
-            search: query,
-            status,
-            type: 'forecast',
-            limit: limit.toString(),
-            order_by: '-activity',
-          });
-          const response = await fetch(`https://www.metaculus.com/api2/questions/?${params}`, {
-            headers: { 'Accept': 'application/json' },
-          });
-          if (!response.ok) return JSON.stringify({ error: `API error: ${response.status}` });
-          const data = await response.json() as { results?: Array<Record<string, unknown>> };
-          return JSON.stringify((data.results || []).slice(0, limit).map((q) => ({
-            id: q.id,
-            title: q.title,
-            probability: (q.community_prediction as { full?: { q2?: number } } | undefined)?.full?.q2,
-            status: q.status,
-            url: q.page_url || `https://www.metaculus.com/questions/${q.id}/`,
-            predictions: q.number_of_predictions,
-          })));
+          const posts = await metaculusSearch(String(toolInput.query || ''),
+            String(toolInput.status || 'open'), Number(toolInput.limit || 20));
+          return JSON.stringify(posts.map(metaculusSummary));
         } catch (err: unknown) {
           return JSON.stringify({ error: (err as Error).message });
         }
       }
 
       case 'metaculus_question': {
-        const questionId = toolInput.question_id as string;
         try {
-          const response = await fetch(`https://www.metaculus.com/api2/questions/${questionId}/`, {
-            headers: { 'Accept': 'application/json' },
-          });
-          if (!response.ok) {
-            if (response.status === 404) return JSON.stringify({ error: 'Question not found' });
-            return JSON.stringify({ error: `API error: ${response.status}` });
-          }
-          return JSON.stringify(await response.json());
+          const post = await metaculusPost(String(toolInput.question_id));
+          return JSON.stringify({ ...post, ...metaculusSummary(post) });
         } catch (err: unknown) {
           return JSON.stringify({ error: (err as Error).message });
         }
       }
 
       case 'metaculus_tournaments': {
-        try {
-          const response = await fetch('https://www.metaculus.com/api2/tournaments/', {
-            headers: { 'Accept': 'application/json' },
-          });
-          if (!response.ok) return JSON.stringify({ error: `API error: ${response.status}` });
-          const data = await response.json() as { results?: Array<Record<string, unknown>> };
-          return JSON.stringify((data.results || []).map((t) => ({
-            id: t.id,
-            name: t.name,
-            questions_count: t.questions_count,
-            close_date: t.close_date,
-          })));
-        } catch (err: unknown) {
-          return JSON.stringify({ error: (err as Error).message });
-        }
+        return JSON.stringify({ error: 'Metaculus retired its tournaments API. Browse https://www.metaculus.com/tournaments/ or use metaculus_tournament_questions with a project ID.' });
       }
 
       case 'metaculus_tournament_questions': {
-        const tournamentId = toolInput.tournament_id as string;
-        const limit = (toolInput.limit as number) || 50;
         try {
-          const response = await fetch(`https://www.metaculus.com/api2/questions/?tournament=${tournamentId}&limit=${limit}`, {
-            headers: { 'Accept': 'application/json' },
-          });
-          if (!response.ok) return JSON.stringify({ error: `API error: ${response.status}` });
-          const data = await response.json() as { results?: Array<Record<string, unknown>> };
-          return JSON.stringify((data.results || []).map((q) => ({
-            id: q.id,
-            title: q.title,
-            probability: (q.community_prediction as { full?: { q2?: number } } | undefined)?.full?.q2,
-            status: q.status,
-          })));
+          const project = Number(toolInput.tournament_id);
+          if (!Number.isSafeInteger(project) || project <= 0) throw new Error('Invalid project ID');
+          const posts = await metaculusSearch('', 'open', Number(toolInput.limit || 50), project);
+          return JSON.stringify(posts.map(metaculusSummary));
         } catch (err: unknown) {
           return JSON.stringify({ error: (err as Error).message });
         }
       }
-
-      // ============================================
-      // PREDICTIT HANDLERS (Read Only)
-      // ============================================
 
       case 'predictit_search': {
         const query = toolInput.query as string;
