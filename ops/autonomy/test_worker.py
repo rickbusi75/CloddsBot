@@ -35,6 +35,24 @@ class ObserverTests(unittest.TestCase):
         b['timestamp'] = 'NaN'
         self.assertIsNone(worker.fill(b, 3, .55))
 
+    def test_protocol_fees_and_unknown_schedules(self):
+        self.assertEqual(worker.taker_fee_rate({'fd': {'r': .05, 'e': 1, 'to': True}}), .05)
+        self.assertEqual(worker.taker_fee_rate({'fd': {'r': 0, 'e': 1}}), 0)
+        for info in ({}, {'fd': {'r': .05, 'e': 2}}, {'fd': {'r': 'NaN', 'e': 1}}, {'fd': {'r': -.01, 'e': 1}}):
+            with self.assertRaises(RuntimeError):
+                worker.taker_fee_rate(info)
+
+    def test_v2_outcome_identifiers_take_precedence_over_legacy_ctf(self):
+        market = {'id': 'm', 'active': True, 'closed': False, 'acceptingOrders': True, 'enableOrderBook': True,
+                  'endDate': (worker.utcnow() + dt.timedelta(days=2)).isoformat(), 'outcomePrices': '[\".5\",\".5\"]',
+                  'outcomes': '[\"Yes\",\"No\"]', 'clobTokenIds': '[\"old-yes\",\"old-no\"]',
+                  'positionIds': ['new-yes', 'new-no'], 'version': 'v2', 'liquidityNum': 2000, 'volume24hr': 2000, 'question': 'Example'}
+        self.assertEqual(worker.normalize_market(market)['tokens'], ['new-yes', 'new-no'])
+        market['version'] = 'v1'
+        self.assertEqual(worker.normalize_market(market)['tokens'], ['old-yes', 'old-no'])
+        market['version'] = 'unknown'
+        self.assertIsNone(worker.normalize_market(market))
+
     def test_cumulative_reservation_survives_restart_timeout_and_shared_key_spend(self):
         info = {'usage_daily': 0, 'usage_monthly': 0}
         for _ in range(11):
@@ -110,13 +128,13 @@ class ObserverTests(unittest.TestCase):
         decision = {'decision': 'CANDIDATE', 'outcome': 'YES', 'probability': .9, 'lowerBound': .8,
                     'rulesClear': True, 'independentPrimarySources': True, 'counterargument': 'Could fail',
                     'sources': [x['url'] for x in evidence]}
-        with patch.object(worker, 'request', side_effect=lambda url, **kw: (self.book() if '/book?' in url else {'base_fee': 0}, {})):
+        with patch.object(worker, 'request', side_effect=lambda url, **kw: (self.book() if '/book?' in url else {'fd': {'r': .05, 'e': 1, 'to': True}}, {})):
             for i in range(6):
-                market = {'id': str(i), 'event': str(i), 'tokens': ['yes', 'no'], 'question': 'Example'}
+                market = {'id': str(i), 'conditionId': 'condition', 'event': str(i), 'tokens': ['yes', 'no'], 'question': 'Example'}
                 self.assertEqual(self.observer.paper_order(market, evidence, decision), 'PAPER_FILLED')
                 self.assertEqual(self.observer.paper_order(market, evidence, decision), 'ALREADY_EXPOSED')
             self.assertLessEqual(self.observer.portfolio()['exposure'], 30 + 1e-8)
-            market = {'id': 'new', 'event': 'new', 'tokens': ['yes', 'no'], 'question': 'Example'}
+            market = {'id': 'new', 'conditionId': 'condition', 'event': 'new', 'tokens': ['yes', 'no'], 'question': 'Example'}
             self.assertEqual(self.observer.paper_order(market, evidence, decision), 'ABSTAIN_PRICE_DEPTH')
         self.observer.snapshot()
         self.assertEqual(json.loads((Path(self.tmp.name) / 'status.json').read_text())['mode'], 'paper')
