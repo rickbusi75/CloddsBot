@@ -99,7 +99,10 @@ def normalize_market(m, now=None):
     end = stamp(m.get('endDate'))
     prices = [finite(x) for x in array(m.get('outcomePrices', []))]
     outcomes = array(m.get('outcomes', []))
-    tokens = array(m.get('clobTokenIds', []))
+    version = m.get('version', 'v1')
+    if version not in ('v1', 'v2'):
+        return None
+    tokens = m.get('positionIds', []) if version == 'v2' else array(m.get('clobTokenIds', []))
     if (not m.get('active') or m.get('closed') or not m.get('acceptingOrders')
             or not m.get('enableOrderBook') or not end or len(prices) != 2
             or len(tokens) != 2 or [str(x).lower() for x in outcomes] != ['yes', 'no']
@@ -108,10 +111,11 @@ def normalize_market(m, now=None):
             or (finite(m.get('liquidityNum')) or 0) < 1000
             or (finite(m.get('volume24hr')) or 0) < 1000):
         return None
-    return {'id': str(m['id']), 'question': m['question'], 'description': m.get('description', '')[:6000],
+    return {'id': str(m['id']), 'conditionId': m.get('conditionId'), 'version': version,
+            'question': m['question'], 'description': m.get('description', '')[:6000],
             'resolutionSource': m.get('resolutionSource'), 'end': end.isoformat(),
             'prices': prices, 'tokens': tokens, 'event': str((m.get('events') or [{}])[0].get('id') or m['id']),
-            'url': 'https://polymarket.com/event/' + str(m.get('slug', '')),
+            'url': 'https://polymarket.com/event/' + str((m.get('events') or [{}])[0].get('slug') or m.get('slug', '')),
             'feesEnabled': m.get('feesEnabled')}
 
 
@@ -139,6 +143,19 @@ def fill(book, dollars, limit, now=None):
     if minimum is None or shares < minimum or cost <= 0:
         return None
     return {'shares': shares, 'cost': cost, 'price': cost / shares, 'bid': max(bids)}
+
+
+def taker_fee_rate(info):
+    """CLOB fd: fee = shares * r * p * (1-p), exponent e=1.
+
+    Legacy /fee-rate base_fee is not the current protocol rate.
+    Unknown schedules abstain instead of understating trading costs.
+    """
+    details = info.get('fd', {})
+    rate, exponent = finite(details.get('r')), finite(details.get('e'))
+    if rate is None or not 0 <= rate <= .10 or exponent != 1:
+        raise RuntimeError('Unsupported protocol fee schedule')
+    return rate
 
 
 class Observer:
@@ -406,18 +423,24 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
         book, _ = request('https://clob.polymarket.com/book?token_id=' + urllib.parse.quote(market['tokens'][index]))
         if str(book.get('asset_id')) != str(market['tokens'][index]):
             return 'WRONG_BOOK'
-        # Conservative uniform 2% paper fee reserve. Unknown higher fee schedules must abstain.
-        fee, _ = request('https://clob.polymarket.com/fee-rate?token_id=' + urllib.parse.quote(market['tokens'][index]))
-        rate = finite(fee.get('base_fee'))
-        if rate is None or not 0 <= rate <= 200:
+        condition = market.get('conditionId')
+        if not condition:
             return 'UNSUPPORTED_FEES'
-        dollars = min(5 / 1.02, (30 - p['exposure']) / 1.02, p['cash'] / 1.02)
+        info, _ = request('https://clob.polymarket.com/clob-markets/' + urllib.parse.quote(condition))
+        try:
+            rate = taker_fee_rate(info)
+        except RuntimeError:
+            return 'UNSUPPORTED_FEES'
+        dollars = min(5 / (1 + rate), (30 - p['exposure']) / (1 + rate), p['cash'] / (1 + rate))
         # Impose at least 10 percentage points of estimation uncertainty and 8 points of net edge.
-        limit = min(lower, probability - .10) - .08
+        limit = (min(lower, probability - .10) - .08) / (1 + rate)
         executed = fill(book, dollars, limit)
-        if not executed or min(lower, probability - .10) - executed['price'] * 1.02 < .08:
+        if not executed:
             return 'ABSTAIN_PRICE_DEPTH'
-        fees = executed['cost'] * .02
+        # Concavity makes average-price fee >= the sum of individual level fees.
+        fees = round(executed['shares'] * rate * executed['price'] * (1 - executed['price']) + .000005, 5) if rate else 0.
+        if min(lower, probability - .10) - executed['price'] - fees / executed['shares'] < .08:
+            return 'ABSTAIN_PRICE_DEPTH'
         self.db.execute('INSERT INTO positions(market,event,token,outcome,question,shares,cost,fees,mark,opened) VALUES(?,?,?,?,?,?,?,?,?,?)',
                         (market['id'], market['event'], market['tokens'][index], decision['outcome'], market['question'],
                          executed['shares'], executed['cost'], fees, executed['bid'], utcnow().isoformat()))

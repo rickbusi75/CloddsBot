@@ -52,7 +52,7 @@ after 15 pUSD of gross daily realized losses or equity below 180 pUSD.
 A paper entry requires two supplied source URLs on different hosts, model-declared
 independent primary evidence, clear resolution rules, and a counterargument. The
 effective probability lower bound is no greater than estimated probability minus
-0.10; the required advantage is 0.08 after the 2% conservative fee reserve. These are
+0.10; the required advantage is 0.08 after the current market's protocol taker fees. These are
 research heuristics, not statistically calibrated probabilities or demonstrated edge.
 There is no instruction to force a trade or maximize the number of bets.
 
@@ -61,6 +61,13 @@ no older than 60 seconds. Wide/crossed books and unsupported fees abstain. Marke
 event deduplication persist across restarts. Holdings mark at observed bid; a fresh
 reconciliation timestamp is displayed in status JSON. A closed market is not treated
 as a win: settlement requires final resolution and binary payout prices.
+
+Read the CLOB market's fd parameters (rate r, exponent e=1) rather than treating the
+legacy fee-rate base_fee field as the current fee schedule. Unknown schedules abstain.
+For protocol v2, use Gamma positionIds even when legacy CTF clobTokenIds are also
+present; unsupported protocols abstain. See the official
+[fee formula](https://docs.polymarket.com/trading/fees) and
+[market identifiers](https://docs.polymarket.com/market-data/market-details).
 
 Simulation does not model queue priority, competition between snapshots, real exchange
 rejections, on-chain settlement delays, redemption transactions, or all correlations
