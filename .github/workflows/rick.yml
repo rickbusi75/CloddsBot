@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 -m unittest discover -s ops/autonomy -p 'test_*.py' -v
           node --test --import tsx tests/unit/observer-control.test.ts tests/unit/ai-spending.test.ts tests/unit/risk-guards.test.ts
+          node --test tests/unit/live-ledger.test.cjs tests/unit/live-reader.test.cjs tests/unit/live-transport.test.cjs
       - name: OpenRouter contract tests (no credentials or paid requests)
         run: node --test --import tsx tests/providers/openrouter.test.ts tests/unit/polymarket-gamma.test.ts tests/unit/polymarket-order-signer-v2.test.ts tests/unit/polymarket-deposit-wallet.test.ts tests/unit/environment-trading-credentials.test.ts tests/unit/hyperliquid-orderbook.test.ts tests/trading/futures-pre-trade.test.ts tests/execution/bracket-stop-trigger.test.ts tests/execution/polymarket-balance.test.ts
       - run: npm run build
