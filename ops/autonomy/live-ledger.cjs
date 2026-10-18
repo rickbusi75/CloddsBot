@@ -95,7 +95,7 @@ class LiveLedger {
   event(intent,kind,detail={}){this.db.prepare('INSERT INTO live_events(intent,at,kind,detail) VALUES(?,?,?,?)').run(intent,new Date(this.now()).toISOString(),kind,JSON.stringify(detail));}
   mode(){return this.get('mode','disabled');}
   // Calling code must expose this only to an explicit authenticated owner action.
-  activate(account, actor) {
+  activate(account, actor, chainCheckpoint=null) {
     validateAccount(account,this.now());
     if (!actor || actor.kind!=='human-owner' || typeof actor.id!=='string' || !actor.id) throw Error('Explicit owner activation required');
     if (account.orders.length || account.positions.length) throw Error('Starter activation requires a flat account');
@@ -105,10 +105,15 @@ class LiveLedger {
       if(this.get('baseline')!==undefined) throw Error('An existing live ledger cannot be reset');
       this.put('baseline',account.cash); this.put('lastCash',account.cash);
       this.put('accountIdentity',account.identity);
+      if(chainCheckpoint) {
+        this.validateChainCheckpoint(chainCheckpoint,account);
+        this.put('chainRequired',true);this.put('chainAnchor',chainCheckpoint);
+      }
       this.put('baselineTrades',account.trades.map(t=>t.id).sort());
       this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.put('mode','manual'); this.put('limits',STARTER); this.put('actor',actor.id);
-      this.event(null,'ACTIVATED',{mode:'manual',limits:STARTER});
+      this.event(null,'ACTIVATED',{mode:'manual',limits:STARTER,
+        ...(chainCheckpoint?{chainBlock:chainCheckpoint.blockNumber}:{})});
     }).immediate();
   }
   halt(reason='owner stop') {
@@ -150,7 +155,42 @@ class LiveLedger {
     this.checkTradeHistory(account);this.checkInventory(account);
     if(Math.abs(account.cash-this.get('lastCash',account.cash))>.00002) throw Error('Cash reconciliation required');
   }
-  reserve(plan,account,approval) {
+  validateChainCheckpoint(point,account) {
+    const age=this.now()-Date.parse(point?.at);
+    if(!point||point.chainId!==137||point.decimals!==6||point.collateral!=='0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb'
+      ||!/^([a-f0-9]{64})$/.test(point.holder||'')||!/^0x[a-f0-9]{64}$/.test(point.blockHash||'')
+      ||!Number.isSafeInteger(point.blockNumber)||point.blockNumber<0||!/^\d+$/.test(point.balanceUnits||'')
+      ||BigInt(point.balanceUnits)!==BigInt(Math.round(account.cash*1e6))
+      ||!Number.isFinite(age)||age>15000||age< -2000)throw Error('Verified fresh chain checkpoint required');
+  }
+  applyChain(proof,account,kind='QUIET',row=null,fill=null) {
+    if(this.get('chainRequired')!==true)return;
+    const anchor=this.get('chainAnchor');
+    if(!proof||!proof.anchor||!anchor||proof.kind!==kind||stable(proof.anchor)!==stable(anchor))throw Error('Chain proof does not start at the durable anchor');
+    this.validateChainCheckpoint(proof.checkpoint,account);
+    const point=proof.checkpoint;
+    if(point.holder!==anchor.holder||point.blockNumber<anchor.blockNumber
+      ||(point.blockNumber===anchor.blockNumber&&point.blockHash!==anchor.blockHash))throw Error('Chain anchor changed or moved backwards');
+    if(kind==='QUIET'&&(proof.movements!==0||point.balanceUnits!==anchor.balanceUnits))throw Error('Quiet chain proof contains a movement');
+    if(kind==='FILL'&&(!row||!fill||point.blockNumber<=anchor.blockNumber||proof.orderId!==row.order_id||proof.token!==row.token
+      ||proof.sharesUnits!==String(Math.round(fill.shares*1e6))
+      ||!Array.isArray(proof.transactions)||!proof.transactions.length||proof.transactions.length>16
+      ||new Set(proof.transactions).size!==proof.transactions.length||proof.transactions.some(t=>!/^0x[a-f0-9]{64}$/.test(t))
+      ||BigInt(proof.cashDeltaUnits)!==(row.side==='BUY'?-1n:1n)*BigInt(Math.round(fill.cash*1e6))
+      ||BigInt(point.balanceUnits)-BigInt(anchor.balanceUnits)!==BigInt(proof.cashDeltaUnits)))throw Error('Chain fill does not match ledger economics');
+    this.put('chainAnchor',point);
+    this.event(row?.id||null,'CHAIN_CONFIRMED',{kind,fromBlock:anchor.blockNumber,toBlock:point.blockNumber,
+      blockHash:point.blockHash,...(kind==='FILL'?{transactions:proof.transactions}:{})});
+  }
+  syncChain(account,proof) {
+    if(this.get('chainRequired')!==true)throw Error('Verified chain baseline missing');
+    this.db.transaction(()=>{
+      if(this.summary().pending)throw Error('Pending intent must be reconciled before a quiet sync');
+      this.checkAccount(account);this.applyChain(proof,account);
+      this.event(null,'CHAIN_SYNCED');
+    }).immediate();
+  }
+  reserve(plan,account,approval,chainProof=null) {
     validatePlan(plan,this.now()); validateAccount(account,this.now());
     const id=planHash(plan);
     if(approval!==id) throw Error('Exact plan approval required');
@@ -158,6 +198,7 @@ class LiveLedger {
       if(this.mode()!=='manual' && !(this.mode()==='halted' && plan.side==='SELL')) throw Error('Live mode disabled or halted');
       if(this.db.prepare('SELECT 1 FROM live_intents WHERE id=?').get(id)) throw Error('Duplicate intent');
       this.checkAccount(account);
+      this.applyChain(chainProof,account);
       const state=this.summary();
       if(state.pending) throw Error('An intent still needs reconciliation');
       const equity=account.cash+account.positions.reduce((sum,p)=>sum+p.bidValue,0);
@@ -181,21 +222,26 @@ class LiveLedger {
       return id;
     }).immediate();
   }
-  signed(id,orderId) {
+  signed(id,orderId,protocol=null) {
     if(!/^0x[0-9a-fA-F]{64}$/.test(orderId)) throw Error('Invalid order hash');
     this.db.transaction(()=>{
       const result=this.db.prepare("UPDATE live_intents SET state='SIGNED',order_id=? WHERE id=? AND state='RESERVED'").run(orderId,id);
       if(result.changes!==1) throw Error('Invalid signing transition');
+      if(this.get('chainRequired')===true) {
+        if(!['v1','v2'].includes(protocol?.version)||(protocol.version==='v1'&&typeof protocol.negRisk!=='boolean'))throw Error('Verified position protocol required');
+        this.put('protocol:'+id,protocol);
+      }
       this.event(id,'SIGNED',{orderId});
     }).immediate();
   }
-  sending(id,account) {
+  sending(id,account,chainProof=null) {
     validateAccount(account,this.now());
     this.db.transaction(()=>{
       const row=this.db.prepare('SELECT plan,side FROM live_intents WHERE id=?').get(id);
       if(!row) throw Error('Unknown intent');
       if(this.mode()!=='manual' && !(this.mode()==='halted' && row.side==='SELL')) throw Error('Stopped before submission');
       this.checkAccount(account);
+      this.applyChain(chainProof,account);
       validatePlan(JSON.parse(row.plan),this.now());
       const r=this.db.prepare("UPDATE live_intents SET state='SENDING' WHERE id=? AND state='SIGNED'").run(id);
       if(r.changes!==1) throw Error('Intent already sent or invalid state');
@@ -235,12 +281,13 @@ class LiveLedger {
       for(const row of unsent) this.reject(row.id,'Process stopped before submission');
     }).immediate();
   }
-  resume(account,actor) {
+  resume(account,actor,chainProof=null) {
     validateAccount(account,this.now());
     if(actor?.kind!=='human-owner'||actor.id!==this.get('actor')) throw Error('Explicit owner action required');
     this.db.transaction(()=>{
       if(this.mode()!=='halted'||this.summary().pending) throw Error('Unresolved order or incompatible mode');
       this.checkAccount(account);
+      this.applyChain(chainProof,account);
       if(this.summary().dailyLoss>=STARTER.dailyLoss) throw Error('Daily loss stop remains active');
       this.put('mode','manual');this.put('haltReason',null);this.event(null,'RESUMED');
     }).immediate();
@@ -252,7 +299,7 @@ class LiveLedger {
       this.event(id,'CANCEL_REQUESTED');
     }).immediate();
   }
-  confirmUnfilledCancellation(id,proof,account) {
+  confirmUnfilledCancellation(id,proof,account,chainProof=null) {
     validateAccount(account,this.now());
     this.db.transaction(()=>{
       const row=this.db.prepare('SELECT * FROM live_intents WHERE id=?').get(id);
@@ -261,6 +308,7 @@ class LiveLedger {
       if(account.orders.some(o=>o.id===row.order_id)||account.trades.some(t=>t.orderId===row.order_id&&t.status!=='FAILED'))throw Error('Cancellation raced with a fill');
       this.checkIdentity(account);this.checkTradeHistory(account,row.order_id);this.checkInventory(account);
       if(Math.abs(account.cash-this.get('lastCash'))>.00002)throw Error('Cash reconciliation required');
+      this.applyChain(chainProof,account);
       this.put('lastTradeSnapshot',tradeSnapshot(account.trades));
       this.db.prepare("UPDATE live_intents SET state='CANCELLED',finished_at=? WHERE id=?").run(new Date(this.now()).toISOString(),id);
       this.event(id,'CANCEL_CONFIRMED_NO_FILL');
@@ -281,6 +329,7 @@ class LiveLedger {
       const position=account.positions.find(p=>p.token===row.token);
       const old=this.db.prepare('SELECT * FROM live_inventory WHERE token=?').get(row.token);
       if(position&&position.market!==row.market)throw Error('Fill market identity mismatch');
+      this.applyChain(proof.chain,account,'FILL',row,proof);
       if(row.side==='BUY') {
         if(proof.cash>row.reserve+.00001 || Math.abs(account.cash-(before-proof.cash))>.00002) throw Error('Buy cash mismatch');
         if(!position||Math.abs(position.shares-((old?.shares||0)+proof.shares))>.00011) throw Error('Buy inventory mismatch');

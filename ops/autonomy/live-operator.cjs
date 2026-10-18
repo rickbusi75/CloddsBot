@@ -37,6 +37,7 @@ class LiveOperator {
       let reconciled=false;
       if(matches&&!summary.pending)try{ledger.checkAccount(account);reconciled=true;}catch{}
       return {initialized:ledger.get('baseline')!==undefined,...summary,accountMatchesLedger:matches,accountReconciled:reconciled,
+        chainPreflightRequired:ledger.get('chainRequired')===true,chainAnchorBlock:ledger.get('chainAnchor')?.blockNumber??null,
         pendingIntents:ledger.db.prepare("SELECT id,state,side,order_id AS orderId FROM live_intents WHERE state IN ('RESERVED','SIGNED','SENDING','UNKNOWN','OPEN','PARTIAL','CANCEL_PENDING')").all()};
     })();}
     finally{ledger.close();}
@@ -61,7 +62,8 @@ class LiveOperator {
       catch{return {ledger:this.localStatus(),account:{known:false},warning:'Account unavailable; do not submit or assume flat',ordersSubmitted:0};}
       const local=this.localStatus(account);
       return {ledger:local,account:{known:true,...publicAccount(account)},ordersSubmitted:0,
-        warning:local.initialized&&!local.accountReconciled?'Account or pending orders require reconciliation before any new entry':null};
+        warning:local.initialized&&!local.accountReconciled?'Account or pending orders require reconciliation before any new entry':
+          local.chainPreflightRequired?'This status is CLOB-only; financial operations require a fresh independent chain preflight':null};
     }
     if(command==='preview')return publicPreview(await this.reader.preview(order));
     // stop remains available while another operator holds the network/TTY lock.
@@ -80,7 +82,7 @@ class LiveOperator {
         await this.confirm('ACTIVER TEST MANUEL 20 PUSD',{mode:'DISABLED',limits:STARTER,
           warning:'Activation of a manual test ledger only. Every order needs separate confirmation. This does not change native bot simulation flags.'});
         const account=await this.reader.account();
-        ledger=new LiveLedger(this.file);ledger.activate(account,this.actor);
+        ledger=new LiveLedger(this.file);await this.transportFactory(ledger).activate(account,this.actor);
         return {ledger:ledger.summary(),ordersSubmitted:0};
       }
       ledger=new LiveLedger(this.file);ledger.recoverAfterRestart();
@@ -100,12 +102,13 @@ class LiveOperator {
       }
       if(command==='resume') {
         await this.confirm('REPRENDRE TEST MANUEL',{ledger:ledger.summary(),warning:'Loss limits and pending reservations will not reset.'});
-        ledger.resume(await this.reader.account(),this.actor);
+        await transport.resume(await this.reader.account(),this.actor);
         return {ledger:ledger.summary(),ordersSubmitted:0};
       }
       const ids=args.length?args:ledger.db.prepare("SELECT id FROM live_intents WHERE state IN ('UNKNOWN','OPEN','PARTIAL','CANCEL_PENDING') ORDER BY at LIMIT 4").all().map(r=>r.id);
       const results=[];
       for(const id of ids)results.push(await transport.reconcile(id));
+      if(!ids.length)await transport.sync();
       return {results,ledger:ledger.summary(),ordersSubmitted:0};
     }finally{if(ledger)ledger.close();release();}
   }

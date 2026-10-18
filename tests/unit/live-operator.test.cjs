@@ -25,7 +25,7 @@ function fixture(t) {
       outcomeLabel:'Yes',marketRules:'Fixture resolution rules; no real market.'};
   }};
   const terminal={interactive:true,write:value=>shown.push(value),ask:async phrase=>phrase};
-  const factory=ledger=>({submit:async(p,approval,actor)=>{
+  const factory=ledger=>({sync:async()=>{},activate:async(a,o)=>ledger.activate(a,o),resume:async(a,o)=>ledger.resume(a,o),submit:async(p,approval,actor)=>{
     assert.equal(actor.id,owner);const id=ledger.reserve(p.plan,p.account,approval);
     ledger.signed(id,'0x'+'a'.repeat(64));ledger.sending(id,account());
     ledger.acknowledge(id,'0x'+'a'.repeat(64),'OPEN');submitted++;

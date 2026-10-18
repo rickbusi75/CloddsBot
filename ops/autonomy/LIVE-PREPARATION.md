@@ -47,8 +47,11 @@ cashflows cannot be ruled out by balance differences alone; authoritative chain
 activity and external-movement handling remain a deployment prerequisite.
 `live-chain.cjs` now supplies standalone read-only finalized-block, collateral-log
 and receipt evidence with two-service agreement per category; see
-`CHAIN-EVIDENCE.md`. It does not yet persist ledger anchors or attribute an
-exchange fill to an approved order, so that prerequisite remains incomplete.
+`CHAIN-EVIDENCE.md`. Its guard now persists anchors and requires approved-order
+events, collateral and ERC-1155 evidence before the draft transport books a fill.
+The deployed service has not received this financial chain. Finalized-block
+tails, complete position-transfer coverage, key/AI execution isolation and actual
+exchange/settlement validation remain prerequisites.
 The current signer supports only cent prices and two-decimal share quantities;
 unsupported precision is rejected rather than silently rounded. Fees withheld
 from received shares are recorded as actual net inventory. Small residual shares
@@ -101,12 +104,14 @@ installing this helper nor backing up a database activates financial operations.
 
 Before installing the operator prototype or enabling an execution service, finish and
 review: archive/restore of any subsequently created funded ledger, authoritative handling
-of outside cashflows and maker trades, source/strategy validation, settlement and
+of outside capital changes and maker trades, key/AI execution isolation,
+source/strategy validation, settlement and
 Deposit Wallet redemption, account-latency and real-exchange tests, exposure and
 currency checks, emergency cancellation and notifications. Actual activation and
 real-money transactions remain actions for the human operator.
 
-Current isolated ARM64 coverage: 57 tests, including wallet changes, overlapping
+Previous isolated ARM64 coverage: 57 foundation tests, extended by chain evidence
+and guard integration tests. These include wallet changes, overlapping
 operator sessions, interruption during confirmation, immutable read-only status,
 and kernel-lock release after abrupt SIGKILL. Coverage also includes an abrupt SIGKILL with an
 outstanding SENDING record, recovery without replay, and simulated purchase/exit

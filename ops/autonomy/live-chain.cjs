@@ -51,6 +51,7 @@ class ChainReader {
       headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id,method,params})});
     if(!response.ok) {
       const retry=Number(response.headers.get('retry-after'));
+      try{await response.body?.cancel();}catch{}
       throw rpcError('Chain RPC unavailable',endpoint,method,{httpStatus:response.status,
         ...(Number.isInteger(retry)&&retry>0&&retry<=3600?{retryAfterSeconds:retry}:{})});
     }
@@ -74,6 +75,18 @@ class ChainReader {
     return {number:quantity(block.number),hash:hash(block.hash),timestamp:quantity(block.timestamp)};
   }
   async block(number) {return this.quorum('eth_getBlockByNumber',[hex(number),false],b=>this.normalizeBlock(b));}
+  async positionBalance(token,protocol,checkpoint) {
+    this.validateCheckpoint(checkpoint);
+    if(typeof token!=='string'||!/^\d+$/.test(token)||BigInt(token)>=(1n<<256n))throw Error('Invalid position ID');
+    const manager=protocol?.version==='v1'?'0x4d97dcd97ec945f40cf65f87097ace5ea0476045':
+      protocol?.version==='v2'?'0x006f54f7f9a22e0000cc2ab60031000000ae9fef':null;
+    if(!manager)throw Error('Unknown position protocol');
+    if((await this.block(checkpoint.blockNumber)).hash!==checkpoint.blockHash)throw Error('Position checkpoint changed');
+    const balance=await this.quorum('eth_call',[{to:manager,data:'0x00fdd58e'+this.wallet.slice(2).padStart(64,'0')+
+      BigInt(token).toString(16).padStart(64,'0')},hex(checkpoint.blockNumber)],v=>word(v).toString());
+    if((await this.block(checkpoint.blockNumber)).hash!==checkpoint.blockHash)throw Error('Position checkpoint changed');
+    return balance;
+  }
   validateCheckpoint(value,fresh=false) {
     if(!value||value.holder!==this.holder||value.chainId!==137||value.collateral!==COLLATERAL
       ||!Number.isSafeInteger(value.blockNumber)||value.blockNumber<0||!/^\d+$/.test(value.balanceUnits||''))throw Error('Wrong or invalid chain checkpoint');

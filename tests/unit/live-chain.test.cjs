@@ -163,3 +163,22 @@ test('chunk boundaries have no gaps and every historical log/receipt uses two hi
   for(const method of ['eth_getLogs','eth_getTransactionReceipt'])assert.deepEqual(
     new Set(s.calls.filter(c=>c.method===method).map(c=>c.endpoint)),new Set(HISTORY_ENDPOINTS));
 });
+
+test('CTF and Protocol V2 owned balances are independently read at the canonical checkpoint',async()=>{
+  const s=fixture(),point=await s.reader.checkpoint();
+  s.mutate((r,e,m,p)=>{if(m==='eth_call'&&p[0].data.startsWith('0x00fdd58e'))r.result=word(6000000);return r;});
+  assert.equal(await s.reader.positionBalance('123',{version:'v1'},point),'6000000');
+  assert.equal(await s.reader.positionBalance('123',{version:'v2'},point),'6000000');
+  const calls=s.calls.filter(c=>c.method==='eth_call'&&c.params[0].data.startsWith('0x00fdd58e'));
+  assert.equal(calls.length,4);assert.equal(new Set(calls.map(c=>c.params[0].to)).size,2);
+  assert(calls.every(c=>c.params[0].data.endsWith(BigInt(123).toString(16).padStart(64,'0'))));
+});
+
+test('unknown position protocols, invalid IDs and changed canonical blocks are refused',async()=>{
+  const s=fixture(),point=await s.reader.checkpoint();const count=s.calls.length;
+  for(const token of ['-1','1e8',(1n<<256n).toString()])await assert.rejects(s.reader.positionBalance(token,{version:'v1'},point),/position ID/);
+  await assert.rejects(s.reader.positionBalance('123',{version:'unknown'},point),/protocol/);
+  assert.equal(s.calls.length,count);
+  s.mutate((r,e,m)=>{if(m==='eth_getBlockByNumber')r.result.hash=hash(999);return r;});
+  await assert.rejects(s.reader.positionBalance('123',{version:'v1'},point),/checkpoint changed/);
+});

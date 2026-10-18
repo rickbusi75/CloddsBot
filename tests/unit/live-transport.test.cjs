@@ -37,7 +37,11 @@ function fixture(t,reply) {
     const signed=await sign(preview);
     return new Response(JSON.stringify({success:true,orderID:signed.orderId,status:'matched'}));
   };
-  const transport=new LiveTransport(ledger,reader,auth,{fetch,sign});
+  // This suite isolates HTTP/signing/account economics. The real chain guard
+  // and its durable ledger integration have their own network-free suite.
+  const chainGuard={quiet:async source=>({account:typeof source==='function'?await source():source}),
+    verifyFill:async()=>null,activate:async(a,o)=>ledger.activate(a,o),resume:async(a,o)=>ledger.resume(a,o)};
+  const transport=new LiveTransport(ledger,reader,auth,{fetch,sign,chainGuard});
   ledger.activate(account,owner);
   return {ledger,reader,transport,preview,owner,calls,sign,plan,
     setAccount:a=>{account={...account,...a};},setOrder:o=>{order=o;},account:()=>account};

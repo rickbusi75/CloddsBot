@@ -1,5 +1,6 @@
 'use strict';
 const {planHash,validateAccount}=require('./live-ledger.cjs');
+const {LiveChainGuard,domainFor}=require('./live-chain-guard.cjs');
 
 function verifyFillEconomics(plan,trades,shares,cash) {
   let gross=0,fees=0,netShares=0,total=0;
@@ -28,8 +29,9 @@ function orderHash(body,domain) {
     types,{...body.order,side:body.order.side==='BUY'?0:1});
 }
 class LiveTransport {
-  constructor(ledger,reader,auth,{fetch=global.fetch,sign}={}) {
+  constructor(ledger,reader,auth,{fetch=global.fetch,sign,chainGuard=new LiveChainGuard(ledger,auth)}={}) {
     this.ledger=ledger;this.reader=reader;this.auth=auth;this.fetch=fetch;
+    this.chainGuard=chainGuard;
     this.sign=sign||((preview)=>{
       const signer=require('../../dist/utils/polymarket-order-signer');
       if(!['v1','v2'].includes(preview.protocol.version))throw Error('Unsupported market protocol');
@@ -45,6 +47,11 @@ class LiveTransport {
   checkActor(actor) {
     if(actor?.kind!=='human-owner'||actor.id!==this.ledger.get('actor'))throw Error('Explicit authenticated owner action required');
   }
+  async activate(account,actor) {return this.chainGuard.activate(account,actor);}
+  async resume(account,actor) {
+    this.checkActor(actor);return this.chainGuard.resume(()=>this.reader.account(),actor);
+  }
+  async sync() {return this.chainGuard.sync(()=>this.reader.account());}
   async submit(approved,approval,actor) {
     this.checkActor(actor);
     if(approval!==planHash(approved.plan))throw Error('Exact plan approval required');
@@ -54,20 +61,26 @@ class LiveTransport {
     if(planHash(fresh.plan)!==approval)throw Error('Market, fees or resolution rules changed since approval');
     const version=await this.reader.get('https://clob.polymarket.com/version');
     if(version.version!==2)throw Error('Unsupported exchange order format');
-    const id=this.ledger.reserve(fresh.plan,fresh.account,approval);
+    const chainProof=await this.chainGuard.quiet(()=>this.reader.account(),{token:fresh.plan.token,protocol:fresh.protocol});
+    const finalPreview=await this.reader.preview(approved.request);finalPreview.plan.expiresAt=approved.plan.expiresAt;
+    if(planHash(finalPreview.plan)!==approval)throw Error('Market changed during chain audit');
+    const id=this.ledger.reserve(fresh.plan,finalPreview.account,approval,chainProof);
     let signed;
     try {
       signed=await this.sign(fresh);
+      const expectedDomain=domainFor(fresh.protocol);
+      if(signed.domain?.exchange.toLowerCase()!==expectedDomain.exchange||signed.domain.version!==expectedDomain.version)throw Error('Signing exchange differs from approved protocol');
       if(signed.body.orderType!=='FOK'||signed.body.owner!==this.auth.apiKey)throw Error('Unexpected order format');
       const order=signed.body.order,plan=fresh.plan;
       const cost=String(Math.round(plan.price*plan.shares*1e6)),shares=String(Math.round(plan.shares*1e6));
       if(order.tokenId!==plan.token||order.side!==plan.side||order.maker?.toLowerCase()!==this.auth.address.toLowerCase()
         ||order.makerAmount!==(plan.side==='BUY'?cost:shares)||order.takerAmount!==(plan.side==='BUY'?shares:cost)
         ||order.signatureType!==this.auth.signatureType||orderHash(signed.body,signed.domain)!==signed.orderId)throw Error('Signed payload differs from approved plan');
-      this.ledger.signed(id,signed.orderId);
-      const current=await this.reader.account();
+      this.ledger.signed(id,signed.orderId,fresh.protocol);
+      const signingProof=await this.chainGuard.quiet(()=>this.reader.account(),{token:fresh.plan.token,protocol:fresh.protocol});
+      const current=signingProof.account;
       validateAccount(current,this.ledger.now());
-      this.ledger.sending(id,current);
+      this.ledger.sending(id,current,signingProof);
     } catch {
       this.ledger.reject(id,'Pre-submission verification failed');
       throw Error('Order not submitted: preflight failed');
@@ -128,11 +141,12 @@ class LiveTransport {
     this.ledger.checkInventory(account,row.token);
     if(account.orders.some(o=>o.id===row.order_id))return {intent:id,state:'OPEN',matched};
     if(order.status==='CANCELED'&&matched===0) {
-      this.ledger.confirmUnfilledCancellation(id,{orderId:row.order_id,status:'CANCELED',sizeMatched:0,authenticated:true},account);
+      const chainProof=await this.chainGuard.quiet(account);
+      this.ledger.confirmUnfilledCancellation(id,{orderId:row.order_id,status:'CANCELED',sizeMatched:0,authenticated:true},account,chainProof);
       return {intent:id,state:'CANCELLED'};
     }
     if(!['MATCHED','CANCELED'].includes(order.status)||matched===0)return {intent:id,state:'AWAITING_RECONCILIATION'};
-    const trades=account.trades.filter(t=>t.orderId===row.order_id);
+    const trades=account.trades.filter(t=>t.orderId===row.order_id&&t.status!=='FAILED');
     if(!trades.length||trades.some(t=>t.status!=='CONFIRMED'||t.token!==row.token||t.side!==row.side))return {intent:id,state:'AWAITING_CONFIRMATION'};
     if(Math.abs(trades.reduce((n,t)=>n+t.shares,0)-matched)>.00011)throw Error('Trade and order quantities disagree');
     const old=this.ledger.db.prepare('SELECT * FROM live_inventory WHERE token=?').get(row.token);
@@ -142,7 +156,10 @@ class LiveTransport {
     if(shares<=0||shares>matched+.00011||cash<=0)return {intent:id,state:'AWAITING_ACCOUNT_BALANCES'};
     try {verifyFillEconomics(JSON.parse(row.plan),trades,shares,cash);}
     catch(error){this.ledger.halt('Fill economics or attribution requires review');throw error;}
-    this.ledger.reconcileFill(id,{orderId:row.order_id,shares,cash,final:true,authenticated:true,accountReflected:true},account);
+    let chain;
+    try{chain=await this.chainGuard.verifyFill(row,()=>this.reader.account(),trades,shares,cash);}
+    catch(error){this.ledger.halt('Blockchain fill attribution requires review; reservation retained');throw error;}
+    this.ledger.reconcileFill(id,{orderId:row.order_id,shares,cash,final:true,authenticated:true,accountReflected:true,chain},chain?.account||account);
     return {intent:id,state:'CONFIRMED',shares,cash};
   }
 }
