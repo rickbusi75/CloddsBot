@@ -17,9 +17,9 @@ Sur l'hôte ARM64, en root, depuis ce dossier installé sous
 ```sh
 python3 deploy.py initialize
 docker compose build hub
-docker run --rm --network none lab/research-hub:20261023.1 python -m unittest -v test_hub
+docker run --rm --network none lab/research-hub:20261023.4 python -m unittest -v test_hub
 docker compose up -d db
-docker run --rm --network research-hub_storage --env-file /srv/lab/config/research-hub/hub.env lab/research-hub:20261023.1 python -m unittest -v test_integration
+docker run --rm --network research-hub_storage --env-file /srv/lab/config/research-hub/hub.env lab/research-hub:20261023.4 python -m unittest -v test_integration
 docker compose up -d hub
 python3 deploy.py import
 ```
@@ -54,6 +54,35 @@ pas la validité externe ni les droits d'accès. Le renouvellement automatique d
 token ACLED n'est pas encore implémenté. Open-Meteo reste désactivé tant que
 l'utilisation finale n'est pas qualifiée.
 
+## Décisions, preuves et disponibilité du modèle
+
+L'orchestrateur possède un outil final `/v1/research/decision`, absent des
+spécialistes. Il conserve une décision validée et immuable avant la clôture du
+workflow, sans créer d'ordre ni de prévision. `/v1/research/complete` termine
+ensuite le dossier et applique les mêmes contrôles de preuve, d'expiration et
+de pause. Une réponse finale tronquée ne détruit donc pas une décision déjà
+enregistrée. Les erreurs de validation restent des erreurs avec leur code
+précis ; elles ne sont pas présentées comme des abstentions réussies.
+
+Le rapprochement documentaire privilégie les sujets nommés et exclut les mots
+génériques des marchés et des dates. Les termes ayant produit le rapprochement
+sont conservés dans le dossier. Il s'agit d'un filtre lexical explicite, pas
+d'une garantie d'équivalence sémantique ou de véracité du document.
+
+Le proxy autorise le repli entre fournisseurs du même modèle, sous les plafonds
+de prix et les réservations existants. Un HTTP 429 final crée une attente
+persistante de cinq minutes, respectée avant tout nouvel appel du hub ou
+nouveau dossier. Aucun nouveau fournisseur de modèle n'est ajouté à la
+configuration. Les recherches sans résultat sont aussi mises en cache.
+La sortie du modèle dispose de 8 192 tokens au maximum, avec effort de
+raisonnement faible lorsque le fournisseur le supporte. Les réservations et
+plafonds monétaires restent appliqués à toute cette sortie, raisonnement inclus.
+
+Le compte distingue solde total et disponible après les achats ouverts,
+hors frais. Une valeur de solde ou de position inconnue déclenche un échec de
+lecture ; elle n'est pas convertie en zéro. Les anciennes données restent
+visibles comme non confirmées. Le résultat net réel demeure incomplet.
+
 ## État et limites
 
 La nouvelle chaîne est en **paper**. Elle ne copie pas la clé de signature du
@@ -64,9 +93,34 @@ valident pas. La revue horaire de positions simulées réutilise la thèse d'ent
 et ne permet que maintien ou vente de l'issue détenue. Elle ne gère pas encore
 les positions réelles ni les déclenchements sur publication nouvelle.
 
-Le digest neuf est désactivé par défaut pour préserver les bilans existants
-9 h/20 h. Le passage au bilan consolidé unique nécessite une reprise explicite
-de sa propriété et un test d'envoi ; ne pas activer deux rapporteurs.
+Le digest neuf est désactivé sur une installation vierge. Le transfert vers le
+bilan quotidien unique de 20 h Paris s'effectue après déploiement du worker
+compatible :
+
+```sh
+python3 digest_owner.py activate
+python3 digest_owner.py status
+```
+
+Le helper vérifie le hash du worker, arrête brièvement l'observer pendant le
+transfert, désactive le digest natif, puis active le hub pour le propriétaire
+Telegram existant. Les anciens créneaux 9 h/20 h et les anciens digests en
+attente sont ignorés par le worker ; ses alertes de panne restent actives.
+Un bilan déjà acquitté par l'observer le soir du transfert n'est pas renvoyé.
+La confirmation Telegram et son message_id sont conservés ; un envoi dont
+l'accusé est perdu n'est pas réémis aveuglément. Les 429 confirmés restent
+réessayables aux passages suivants du workflow.
+
+`python3 digest_owner.py rollback` restaure le responsable et les réglages
+précédents depuis l'état privé. Il n'altère pas les réglages de trading.
+L'image du bot utilisée pour ce transfert hérite de rick-20261023.1 et ne
+remplace que ops/autonomy/worker.py ; ne pas reconstruire son dist depuis le
+clone en perdant les overlays déployés.
+
+Les commandes Telegram `/veille pause` et `/veille reprise` pilotent le
+contrôle partagé des deux veilles. La pause bloque les nouvelles recherches
+et entrées, tout en maintenant rapprochement, résolution et bilans. Une entrée
+proposée par une analyse déjà lancée est également bloquée après la pause.
 
 Les sources marquées « configurées » ou « en attente » ne sont pas toutes
 validées. Les adaptateurs de recherche sont appelés à la demande. Le calendrier

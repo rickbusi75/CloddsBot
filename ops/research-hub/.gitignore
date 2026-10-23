@@ -1,4 +1,5 @@
 __pycache__/
+observer-overlay/
 *.pyc
 .venv/
 compose.private.yaml

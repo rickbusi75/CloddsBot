@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS api_usage(id bigserial PRIMARY KEY,source_id text NOT
  credits double precision NOT NULL DEFAULT 0,remaining double precision,data jsonb);
 CREATE TABLE IF NOT EXISTS notifications(key text PRIMARY KEY,text text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),
  status text NOT NULL DEFAULT 'pending',sent_at timestamptz,attempts int NOT NULL DEFAULT 0,error text);
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS provider_message_id text;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS attempted_at timestamptz;
 CREATE TABLE IF NOT EXISTS execution_events(id text PRIMARY KEY,intent_id text NOT NULL,at timestamptz NOT NULL DEFAULT now(),data jsonb NOT NULL);
 """
 

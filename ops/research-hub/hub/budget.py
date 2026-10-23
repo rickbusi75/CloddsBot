@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 import threading
 
-from .common import iso, now, number, request
+from .common import iso, now, number, request, stamp, UpstreamError
 
 
 class Budget:
@@ -33,8 +33,17 @@ class Budget:
 
     def usage(self):
         with self.connection() as connection:
+            retry = connection.execute("SELECT value FROM kv WHERE key='hubProviderRetryAt'").fetchone()
             return {'day': self.total(connection, iso()[:10]), 'month': self.total(connection, iso()[:7]),
-                    'daily_limit': self.settings['daily_ai_usd'], 'monthly_limit': self.settings['monthly_ai_usd']}
+                    'daily_limit': self.settings['daily_ai_usd'], 'monthly_limit': self.settings['monthly_ai_usd'],
+                    'provider_retry_at': json.loads(retry[0]) if retry else None}
+
+    def provider_ready(self):
+        with self.connection() as connection:
+            row = connection.execute("SELECT value FROM kv WHERE key='hubProviderRetryAt'").fetchone()
+            retry = stamp(json.loads(row[0])) if row else None
+            if retry and retry > now():
+                raise RuntimeError('model_provider_rate_limited')
 
     def reserve(self, amount, provider):
         if number(amount) is None or not 0 < amount <= self.settings['max_ai_call_usd']:
@@ -69,6 +78,7 @@ class Budget:
                     connection.execute("INSERT INTO kv(key,value) VALUES('budgetFault','true') ON CONFLICT(key) DO UPDATE SET value='true'")
 
     def completion(self, body):
+        self.provider_ready()
         key = self.env.get('OPENROUTER_API_KEY')
         if not key:
             raise RuntimeError('openrouter_not_configured')
@@ -93,8 +103,8 @@ class Budget:
         prompt, output = number(pricing.get('prompt')), number(pricing.get('completion'))
         if prompt is None or output is None or min(prompt, output) < 0 or any(number(pricing.get(k), 0) != 0 for k in ('request', 'image', 'web_search', 'internal_reasoning')):
             raise RuntimeError('unsupported_model_pricing')
-        cap = min(int(body.get('max_tokens') or body.get('max_completion_tokens') or 1800), 2400)
-        if not 1 <= cap <= 2400:
+        cap = min(int(body.get('max_tokens') or body.get('max_completion_tokens') or 1800), 8192)
+        if not 1 <= cap <= 8192:
             raise ValueError('invalid_max_tokens')
         # Bound every call, including tool definitions/history. Provider price caps are
         # sent as well; bytes conservatively bound text tokens plus a framing margin.
@@ -103,9 +113,18 @@ class Budget:
         reservation = self.reserve(amount, provider['data'])
         payload = {k: v for k, v in body.items() if k not in ('stream', 'stream_options', 'max_completion_tokens', 'user')}
         payload.update(max_tokens=cap, stream=False,
-                       provider={'allow_fallbacks': False, 'require_parameters': True,
+                       provider={'allow_fallbacks': True, 'require_parameters': True,
                                  'max_price': {'prompt': prompt * 2e6, 'completion': output * 2e6}})
-        response, _ = self.transport('https://openrouter.ai/api/v1/chat/completions', headers=auth, body=payload, timeout=150)
+        if 'reasoning' in (meta or {}).get('supported_parameters', []):
+            payload['reasoning'] = {'effort': 'low'}
+        try:
+            response, _ = self.transport('https://openrouter.ai/api/v1/chat/completions', headers=auth, body=payload, timeout=150)
+        except UpstreamError as error:
+            if error.status == 429:
+                with self.connection() as connection:
+                    connection.execute("INSERT INTO kv VALUES('hubProviderRetryAt',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                       (json.dumps(iso(now() + dt.timedelta(minutes=5))),))
+            raise
         actual = number(response.get('usage', {}).get('cost'))
         self.settle(reservation, actual)
         if actual is not None and actual > amount + 0.000001:

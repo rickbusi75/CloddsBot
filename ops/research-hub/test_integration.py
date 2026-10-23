@@ -11,13 +11,14 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from hub.common import iso, now
+from hub.common import iso, now, UpstreamError
 from hub.engine import Engine
 from hub.markets import normalize
 from hub.store import Store
@@ -157,6 +158,96 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result['result']['validation'], 'trade_hypothesis_incomplete')
         self.assertEqual(self.engine.paper_portfolio()['open'], 0)
 
+    def test_staged_decision_survives_truncated_final_prose_without_early_fill(self):
+        run = self.claim()
+        staged = self.engine.stage_decision(run['run_id'], self.decision())
+        self.assertEqual(staged['execution'], 'not_submitted')
+        self.assertEqual(self.engine.paper_portfolio()['open'], 0)
+        self.assertEqual(self.store.one('SELECT count(*) n FROM forecasts')['n'], 0)
+        result = self.engine.complete(run['run_id'], 'Analyse terminée mais texte tronqué...')
+        self.assertEqual(result['result']['decision_origin'], 'agent_decision_tool')
+        self.assertEqual(result['result']['execution']['status'], 'paper_filled')
+        self.assertTrue(self.engine.complete(run['run_id'], {'analysis_error': True})['duplicate'])
+        self.assertEqual(self.engine.paper_portfolio()['open'], 1)
+
+    def test_staged_decision_is_immutable_and_invalid_evidence_can_be_corrected(self):
+        run = self.claim()
+        with self.assertRaisesRegex(ValueError, 'unknown_evidence_reference'):
+            self.engine.stage_decision(run['run_id'], {**self.decision(), 'evidence_ids': ['invented']})
+        self.assertIsNone(self.store.get('decision:' + run['run_id']))
+        self.engine.stage_decision(run['run_id'], self.decision('WAIT'))
+        self.engine.stage_decision(run['run_id'], self.decision('WAIT'))
+        with self.assertRaisesRegex(ValueError, 'decision_already_staged'):
+            self.engine.stage_decision(run['run_id'], self.decision())
+        self.assertEqual(self.engine.complete(run['run_id'], {'analysis_error': True})['result']['action'], 'WAIT')
+        self.assertEqual(self.engine.paper_portfolio()['open'], 0)
+
+    def test_expiration_and_pause_still_apply_to_staged_buy(self):
+        run = self.claim()
+        self.engine.stage_decision(run['run_id'], self.decision())
+        control = Path(self.engine.env['OBSERVER_LEDGER']).parent / 'control.json'
+        control.write_text('{"paused":true}')
+        self.assertEqual(self.engine.complete(run['run_id'], 'Done')['result']['execution']['status'], 'paused')
+        self.assertEqual(self.engine.paper_portfolio()['open'], 0)
+        control.write_text('{"paused":false}')
+        self.store.execute('UPDATE markets SET last_researched=NULL')
+        run = self.claim()
+        self.store.execute("UPDATE research SET created_at=now()-interval '21 minutes' WHERE id=%s", (run['run_id'],))
+        with self.assertRaisesRegex(ValueError, 'research_not_running_or_expired'):
+            self.engine.stage_decision(run['run_id'], self.decision())
+
+    def test_failure_keeps_specific_validation_and_excerpt_without_forecast(self):
+        run = self.claim()
+        with self.assertRaisesRegex(ValueError, 'single_decision_object_required'):
+            self.engine.complete(run['run_id'], 'No structured decision available')
+        row = self.store.one('SELECT status,error,result FROM research WHERE id=%s', (run['run_id'],))
+        self.assertEqual(row['error'], 'single_decision_object_required')
+        self.assertEqual(row['result']['output_excerpt'], 'No structured decision available')
+        self.assertEqual(self.store.one('SELECT count(*) n FROM forecasts')['n'], 0)
+
+    def test_persisted_provider_backoff_skips_claim_before_call_or_lease(self):
+        with sqlite3.connect(self.engine.env['OBSERVER_LEDGER']) as c:
+            c.execute("INSERT INTO kv VALUES('hubProviderRetryAt',?)", (json.dumps(iso(now()+dt.timedelta(minutes=5))),))
+        self.assertEqual(self.engine.claim()['reason'], 'model_provider_rate_limited')
+        self.assertEqual(self.store.one('SELECT count(*) n FROM research')['n'], 0)
+        self.assertEqual(self.store.one('SELECT count(*) n FROM leases')['n'], 0)
+
+    def test_related_evidence_excludes_other_subjects_in_same_theme(self):
+        good = self.store.evidence('fixture', {'url': 'https://example.com/putin', 'title': 'Putin election update', 'text': 'Putin speaks', 'theme': 'politics'})
+        self.store.evidence('fixture', {'url': 'https://example.com/us', 'title': 'US president in December 2026', 'text': 'Election plans', 'theme': 'politics'})
+        evidence = self.engine.related_evidence({'question': 'Will Putin be President in December 2026?', 'theme': 'politics'})
+        self.assertEqual([x['id'] for x in evidence], [good])
+        self.assertEqual(evidence[0]['matched_terms'], ['putin'])
+
+    def test_empty_search_is_cached_and_does_not_repeat_requests(self):
+        self.engine.env['SEARXNG_URL'] = 'http://searxng:8080'
+        calls = []
+        def empty(url, **kwargs):
+            calls.append(url)
+            return {'results': []}, {}
+        self.engine.collectors.request = empty
+        self.assertEqual(self.engine.collectors.search('Empty fixture', 'politics'), [])
+        self.assertEqual(self.engine.collectors.search('Empty fixture', 'politics'), [])
+        self.assertEqual(len(calls), 1)
+
+    def test_stale_book_does_not_replace_mark_and_bad_balance_keeps_last_snapshot(self):
+        run = self.claim()
+        self.engine.complete(run['run_id'], self.decision())
+        before = self.store.one('SELECT mark FROM paper_positions')['mark']
+        self.book.update(timestamp=1000, bids=[{'price': '.9', 'size': 1000}])
+        self.store.execute('INSERT INTO account_snapshots(data) VALUES(%s)', (Jsonb({'fixture': True}),))
+        self.engine.env['POLY_FUNDER_ADDRESS'] = 'fixture'
+        def account(path):
+            return {} if path.startswith('/balance-') else {'data': [], 'next_cursor': 'LTE='}
+        def reads(url, **kwargs):
+            return (self.book.copy() if '/book?' in url else []), {}
+        with patch.object(self.engine, 'account_get', side_effect=account), patch.object(self.engine, 'request', side_effect=reads):
+            result = self.engine.reconcile()
+        self.assertIsNotNone(result['account_error'])
+        self.assertEqual(result['paper_mark_errors'], 1)
+        self.assertEqual(self.store.one('SELECT count(*) n FROM account_snapshots')['n'], 1)
+        self.assertEqual(self.store.one('SELECT mark FROM paper_positions')['mark'], before)
+
     def test_position_review_gets_original_thesis_and_hourly_cooldown(self):
         run = self.claim()
         self.engine.complete(run['run_id'], self.decision())
@@ -188,6 +279,94 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(seen, [None, ['second-page']])
         self.assertTrue(result['complete'])
         self.assertEqual(self.store.get('universe_last_complete')['markets'], 1)
+
+    def prepare_digest(self):
+        self.engine.settings.update(digest_enabled=True, telegram_chat_id='123')
+        self.engine.env['TELEGRAM_BOT_TOKEN'] = 'test'
+        with sqlite3.connect(self.engine.env['OBSERVER_LEDGER']) as c:
+            c.execute("INSERT OR REPLACE INTO kv VALUES('digestOwner','\"research-hub\"')")
+
+    def test_digest_owner_and_dst_deduplicate_across_restart(self):
+        self.prepare_digest()
+        instant = dt.datetime.fromisoformat('2026-10-25T19:05:00+00:00')
+        with patch('hub.reporting.now', return_value=instant), patch.object(self.engine, 'request', return_value=({'ok': True, 'result': {'message_id': 123}}, {})) as send:
+            self.assertEqual(self.engine.daily_digest()['delivery'], 'sent')
+            self.assertEqual(self.engine.daily_digest()['delivery'], 'already_attempted')
+            restarted = Engine(self.store, settings=self.engine.settings, env=self.engine.env, transport=self.transport)
+            self.assertEqual(restarted.daily_digest()['delivery'], 'already_attempted')
+            self.assertEqual(send.call_count, 1)
+        row = self.store.one('SELECT * FROM notifications')
+        self.assertEqual(row['key'], 'daily:2026-10-25')
+        self.assertEqual(row['provider_message_id'], '123')
+
+    def test_digest_does_not_send_without_ownership_or_outside_hour(self):
+        self.prepare_digest()
+        with sqlite3.connect(self.engine.env['OBSERVER_LEDGER']) as c:
+            c.execute("UPDATE kv SET value='\"observer\"' WHERE key='digestOwner'")
+        with patch('hub.reporting.now', return_value=dt.datetime.fromisoformat('2026-10-23T18:10:00+00:00')):
+            self.assertEqual(self.engine.daily_digest()['delivery'], 'not_owner')
+        with patch('hub.reporting.now', return_value=dt.datetime.fromisoformat('2026-10-23T17:10:00+00:00')):
+            self.assertEqual(self.engine.daily_digest()['delivery'], 'not_scheduled')
+        self.assertEqual(self.store.one('SELECT count(*) n FROM notifications')['n'], 0)
+
+    def test_uncertain_digest_is_not_blindly_retried(self):
+        self.prepare_digest()
+        instant = dt.datetime.fromisoformat('2026-10-23T18:05:00+00:00')
+        with patch('hub.reporting.now', return_value=instant), patch.object(self.engine, 'request', side_effect=RuntimeError('response_lost')) as send:
+            with self.assertRaises(RuntimeError):
+                self.engine.daily_digest()
+            self.assertEqual(self.engine.daily_digest()['delivery'], 'already_attempted')
+            self.assertEqual(send.call_count, 1)
+        self.assertEqual(self.store.one('SELECT status FROM notifications')['status'], 'uncertain')
+
+    def test_interrupted_sender_becomes_uncertain(self):
+        self.prepare_digest()
+        self.store.execute("INSERT INTO notifications(key,text,status,attempted_at) VALUES('fixture','pending','sending',now()-interval '20 minutes')")
+        self.assertEqual(self.engine.monitor()['uncertain_notifications'], 1)
+        self.assertEqual(self.store.one('SELECT status FROM notifications')['status'], 'uncertain')
+
+    def test_rate_limited_source_waits_before_requesting_again(self):
+        self.engine.settings['sources'] = {'gdelt': True}
+        self.store.source_status('gdelt', 'error', 'upstream_http_429')
+        with patch.object(self.engine.collectors, 'request', side_effect=AssertionError('No retry during backoff')):
+            result = self.engine.collectors.collect(force=True)
+        self.assertEqual(result['gdelt']['deferred'], 'provider_rate_limit')
+
+    def test_brave_failure_falls_back_with_correct_provenance(self):
+        self.engine.env.update(BRAVE_SEARCH_API_KEY='test', SEARXNG_URL='http://searxng:8080')
+        def search(url, **kwargs):
+            if 'api.search.brave.com' in url:
+                raise UpstreamError(429)
+            if 'searxng:8080' in url:
+                return {'results': [{'url': 'https://example.com/news', 'title': 'Primary report', 'content': 'Relevant news'}]}, {}
+            return '<html>Primary report contents</html>', {}
+        self.engine.collectors.request = search
+        result = self.engine.collectors.search('Fixture question', 'politics')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(self.store.one('SELECT source_id FROM evidence WHERE id=%s', (result[0]['evidence_id'],))['source_id'], 'searxng')
+        self.assertEqual(self.store.one("SELECT last_error FROM sources WHERE id='brave'")['last_error'], 'upstream_http_429')
+        self.assertEqual(self.store.one("SELECT status FROM sources WHERE id='searxng'")['status'], 'ok')
+
+    def test_shared_pause_blocks_inflight_buys_but_keeps_settlement_and_sales(self):
+        run = self.claim()
+        self.engine.complete(run['run_id'], self.decision())
+        control = Path(self.engine.env['OBSERVER_LEDGER']).parent / 'control.json'
+        control.write_text('{"paused":true}')
+        self.assertFalse(self.engine.claim()['should_run'])
+        self.assertEqual(self.engine.run('scan')['status'], 'paused')
+        with patch.object(self.engine, 'request', side_effect=AssertionError('No entry after pause')):
+            self.assertEqual(self.engine.paper_decision('inflight-buy', self.market, self.decision())['status'], 'paused')
+        self.book.update(bids=[{'price': '.7', 'size': '1000'}], asks=[{'price': '.71', 'size': '1000'}])
+        self.assertEqual(self.engine.paper_decision('exit-while-paused', self.market, self.decision('SELL'))['status'], 'paper_sold')
+        self.assertEqual(self.engine.run('resolve')['status'], 'ok')
+
+    def test_bad_shared_control_does_not_resume_research(self):
+        control = Path(self.engine.env['OBSERVER_LEDGER']).parent / 'control.json'
+        for value in ['{broken', '{"paused":"false"}', '[]']:
+            control.write_text(value)
+            self.assertTrue(self.engine.paused())
+        control.write_text('{"paused":false}')
+        self.assertFalse(self.engine.paused())
 
 
 if __name__ == '__main__':

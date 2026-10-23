@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 from psycopg.types.json import Jsonb
 
-from .common import digest, iso, now, number, query, request, stamp
+from .common import digest, iso, now, number, query, request, stamp, UpstreamError
 from .markets import devig, normalize
 
 
@@ -39,7 +39,9 @@ def rss_items(raw, theme):
         if not link:
             node = entry.find('{http://www.w3.org/2005/Atom}link')
             link = node.get('href', '') if node is not None else ''
-        if link.startswith('https://'):
+        # Preserve the URL published by the feed, including historical HTTP
+        # provenance links. Fetching untrusted pages still requires public HTTPS.
+        if link.startswith(('https://', 'http://')):
             result.append({'url': link, 'title': clean(field('title'), 500), 'text': clean(field('description') or field('summary')),
                            'published_at': date(field('pubDate') or field('published') or field('updated')), 'theme': theme})
     return result[:50]
@@ -107,7 +109,10 @@ class Collectors:
                 self.store.source_status(sid, 'configuration_required')
                 result[sid] = 'configuration_required'
                 continue
-            state = self.store.one('SELECT last_success FROM sources WHERE id=%s', (sid,))
+            state = self.store.one('SELECT last_success,checked_at,last_error FROM sources WHERE id=%s', (sid,))
+            if state and state['last_error'] == 'upstream_http_429' and state['checked_at'] and (now() - state['checked_at']).total_seconds() < 3600:
+                result[sid] = {'deferred': 'provider_rate_limit'}
+                continue
             if not force and state and state['last_success'] and (now() - state['last_success']).total_seconds() < source['interval']:
                 continue
             try:
@@ -117,7 +122,7 @@ class Collectors:
                 self.store.source_status(sid, 'ok')
                 result[sid] = len(items)
             except Exception as error:
-                self.store.source_status(sid, 'error', str(error) if type(error) is RuntimeError else type(error).__name__)
+                self.store.source_status(sid, 'error', str(error) if isinstance(error, UpstreamError) or type(error) is RuntimeError else type(error).__name__)
                 result[sid] = {'error': type(error).__name__}
         return result
 
@@ -245,20 +250,31 @@ class Collectors:
     def search(self, question, theme):
         key = 'search:' + digest([question, iso()[:13]])
         cached = self.store.get(key)
-        if cached:
+        if cached is not None:
             return cached
-        items = []
+        items, source = [], None
         if self.env.get('BRAVE_SEARCH_API_KEY') and self.settings['sources'].get('brave'):
             used = self.store.one("SELECT count(*) n FROM api_usage WHERE source_id='brave' AND at>now()-interval '1 day'")['n']
             if used < 12:
-                data, _ = self.request(query('https://api.search.brave.com/res/v1/web/search', {'q': question, 'count': 5, 'freshness': 'pw'}), headers={'X-Subscription-Token': self.env['BRAVE_SEARCH_API_KEY']})
+                # Failed requests also remain counted; avoid an unbounded retry loop.
                 self.store.execute('INSERT INTO api_usage(source_id,credits) VALUES(%s,1)', ('brave',))
-                items = [{'url': x['url'], 'title': x.get('title', ''), 'text': x.get('description', ''), 'theme': theme,
-                          'published_at': date(x.get('page_age'))} for x in data.get('web', {}).get('results', [])[:5]]
+                try:
+                    data, _ = self.request(query('https://api.search.brave.com/res/v1/web/search', {'q': question, 'count': 5, 'freshness': 'pw'}), headers={'X-Subscription-Token': self.env['BRAVE_SEARCH_API_KEY']})
+                    items = [{'url': x['url'], 'title': x.get('title', ''), 'text': x.get('description', ''), 'theme': theme,
+                              'published_at': date(x.get('page_age'))} for x in data.get('web', {}).get('results', [])[:5]]
+                    source = 'brave'
+                    self.store.source_status('brave', 'ok')
+                except Exception as error:
+                    self.store.source_status('brave', 'error', str(error) if isinstance(error, UpstreamError) else type(error).__name__)
         if not items and self.env.get('SEARXNG_URL') and self.settings['sources'].get('searxng'):
             # This URL is private configuration, never supplied by an agent.
-            data, _ = self.request(query(self.env['SEARXNG_URL'].rstrip('/') + '/search', {'q': question, 'format': 'json'}))
-            items = [{'url': x['url'], 'title': x.get('title', ''), 'text': x.get('content', ''), 'theme': theme} for x in data.get('results', [])[:5]]
+            try:
+                data, _ = self.request(query(self.env['SEARXNG_URL'].rstrip('/') + '/search', {'q': question, 'format': 'json'}))
+                items = [{'url': x['url'], 'title': x.get('title', ''), 'text': x.get('content', ''), 'theme': theme} for x in data.get('results', [])[:5]]
+                source = 'searxng'
+                self.store.source_status('searxng', 'ok')
+            except Exception as error:
+                self.store.source_status('searxng', 'error', str(error) if isinstance(error, UpstreamError) else type(error).__name__)
         result = []
         for item in items:
             if not str(item['url']).startswith('https://'):
@@ -268,7 +284,7 @@ class Collectors:
                 item['text'] = clean(text)
             except Exception:
                 item['excerpt_only'] = True
-            item['evidence_id'] = self.store.evidence('brave' if self.env.get('BRAVE_SEARCH_API_KEY') else 'searxng', item)
+            item['evidence_id'] = self.store.evidence(source, item)
             result.append(item)
         self.store.put(key, result)
         return result
@@ -282,12 +298,20 @@ class Collectors:
             latitude, longitude, zone = self.settings['weather_locations'][city]
             if self.settings['sources'].get('openmeteo'):
                 data, _ = self.request(query('https://ensemble-api.open-meteo.com/v1/ensemble', {'latitude': latitude, 'longitude': longitude, 'hourly': 'temperature_2m', 'models': 'icon_seamless', 'timezone': zone, 'forecast_days': 7}))
+                self.store.source_status('openmeteo', 'ok')
                 return {'type': 'ensemble', 'city': city, 'station_rules_must_be_verified': True, 'data': data}
+            if not self.settings['sources'].get('nws') or not zone.startswith('America/'):
+                return {'status': 'weather_provider_mapping_required', 'city': city}
             data, _ = self.request('https://api.weather.gov/points/' + str(latitude) + ',' + str(longitude))
             forecast, _ = self.request(data['properties']['forecastHourly'])
+            self.store.source_status('nws', 'ok')
             return {'type': 'nws_hourly', 'city': city, 'station_rules_must_be_verified': True, 'data': forecast['properties']['periods'][:72]}
-        if theme == 'economics':
+        if theme == 'economics' and self.settings['sources'].get('bls'):
             data, _ = self.request('https://api.bls.gov/publicAPI/v2/timeseries/data/CUUR0000SA0')
+            if data.get('status') != 'REQUEST_SUCCEEDED':
+                self.store.source_status('bls', 'error', 'bls_request_not_succeeded')
+                return {'status': 'bls_data_unavailable'}
+            self.store.source_status('bls', 'ok')
             return {'type': 'historical_cpi_not_a_forecast', 'data': data}
         if theme == 'crypto':
             return {'type': 'current_chain_tvl_not_forecast', 'data': self.store.get('defillama_snapshot', {})}

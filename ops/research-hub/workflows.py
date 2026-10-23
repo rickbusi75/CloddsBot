@@ -16,11 +16,14 @@ Choisis les outils et spécialistes utiles à ce dossier ; tu peux demander une 
 Explique tes incertitudes, cite uniquement les identifiants de preuves fournis et conserve un contre-argument sérieux.
 Les autres marchés de prévision constituent un contexte, pas une source indépendante établissant la vérité.
 Tu peux conclure WAIT. Aucune obligation de parier. N'invente ni fait, ni prix, ni preuve, ni probabilité calibrée.
-Réponds uniquement par un objet JSON :
+Prépare une décision structurée avec ce schéma :
 {"action":"BUY"|"SELL"|"WAIT","outcome":"libellé exact","probability":0..1 ou null,
 "lower_bound":0..1 ou null,"rules_checked":true|false,"evidence_ids":["id exact"],
 "reason":"explication française","counterargument":"objection","invalidation":"fait qui changerait la décision"}.
 probability et lower_bound concernent l'outcome choisi. Si les preuves ne permettent pas de chiffrer, probability=null et action=WAIT.
+Termine en appelant obligatoirement l'outil « Enregistrer la décision finale » avec cet objet JSON, même pour WAIT.
+Cet outil fixe ta décision ; ne le rappelle pas pour changer d'avis. Il n'envoie aucun ordre.
+Après sa confirmation, réponds simplement « Décision enregistrée ». Garde tes explications dans reason, en moins de 700 caractères.
 Ne demande jamais de clé privée ni de modification des workflows. Les calculs d'exécution et de budget sont traités par les outils.'''
 
 
@@ -86,7 +89,7 @@ def agent_workflow(http_credential, model_credential, model, positions=False):
     connect(connections, 'Orchestrateur', 'Enregistrer la décision')
     model_node = node('Modèle via budget partagé', '@n8n/n8n-nodes-langchain.lmChatOpenAi', {
         'model': {'__rl': True, 'value': model, 'mode': 'id'}, 'responsesApiEnabled': False,
-        'options': {'maxTokens': 1800, 'temperature': .1, 'timeout': 180000, 'maxRetries': 0}},
+        'options': {'maxTokens': 8192, 'temperature': .1, 'timeout': 180000, 'maxRetries': 0}},
         [700, 480], 1.3, {'openAiApi': model_credential})
     nodes.append(model_node)
     connect(connections, model_node['name'], 'Orchestrateur', 'ai_languageModel')
@@ -118,6 +121,15 @@ def agent_workflow(http_credential, model_credential, model, positions=False):
         if title == 'Spécialiste thématique':
             for tool_title, _, _ in tools:
                 connect(connections, tool_title, title, 'ai_tool')
+    decision_tool = node('Enregistrer la décision finale', 'n8n-nodes-base.httpRequestTool', {
+        'toolDescription': 'Étape finale obligatoire : conserve la décision JSON validée, sans envoyer un ordre. Une seule décision par dossier. Si une référence est refusée, utilise les identifiants exacts des preuves reçues.',
+        'method': 'POST', 'url': BASE + '/v1/research/decision',
+        'authentication': 'genericCredentialType', 'genericAuthType': 'httpHeaderAuth',
+        'sendBody': True, 'specifyBody': 'json',
+        'jsonBody': '={{ JSON.stringify({run_id: $("Sélectionner un dossier").first().json.run_id, decision: $fromAI("decision", "Objet JSON final : action BUY/SELL/WAIT, outcome exact ou null pour WAIT, probability et lower_bound entre 0 et 1 ou null, rules_checked, evidence_ids exacts, reason en français (700 caractères), counterargument, invalidation", "json")}) }}',
+        'options': {'timeout': 45000}}, [1550, 600], 4.2, {'httpHeaderAuth': http_credential})
+    nodes.append(decision_tool)
+    connect(connections, decision_tool['name'], 'Orchestrateur', 'ai_tool')
     return {'name': PREFIX + ('10 • Revue des positions' if positions else '04 • Orchestrateur et spécialistes'), 'nodes': nodes, 'connections': connections,
             'settings': {'timezone': 'Europe/Paris', 'executionTimeout': 1200, 'saveDataErrorExecution': 'all', 'saveDataSuccessExecution': 'all'}}
 

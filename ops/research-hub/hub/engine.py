@@ -15,8 +15,11 @@ from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
 from .budget import Budget
+from .accounting import cash_summary, positions_value
+from . import reporting
 from .collectors import Collectors
-from .common import digest, iso, now, number, query, request, stamp
+from .evidence import relevance
+from .common import digest, iso, now, number, query, request, stamp, UpstreamError
 from .markets import eligibility, final_result, simulate_fill
 from .store import Store
 
@@ -76,6 +79,18 @@ class Engine:
                 raise ValueError('invalid_setting_' + key)
         ZoneInfo(self.settings['timezone'])
 
+    def paused(self):
+        if not self.settings['enabled']:
+            return True
+        control = Path(self.env.get('OBSERVER_LEDGER', '/observer/observer.sqlite')).parent / 'control.json'
+        try:
+            data = json.loads(control.read_text())
+            return data['paused'] if isinstance(data, dict) and isinstance(data.get('paused'), bool) else True
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            return True
+
     def run(self, kind):
         actions = {'universe': self.collectors.universe, 'collect': self.collectors.collect,
                    'scan': self.quantitative_scan, 'reconcile': self.reconcile,
@@ -83,7 +98,7 @@ class Engine:
                    'health': self.monitor, 'registry': self.registry_review}
         if kind not in actions:
             raise ValueError('unknown_job')
-        if not self.settings['enabled'] and kind not in ('health', 'digest', 'reconcile', 'registry'):
+        if self.paused() and kind not in ('health', 'digest', 'reconcile', 'resolve', 'registry'):
             return {'status': 'paused'}
         with self.store.job(kind) as result:
             if result is None:
@@ -112,8 +127,14 @@ class Engine:
     def claim(self, purpose='scan'):
         if purpose not in ('scan', 'positions'):
             raise ValueError('unknown_research_purpose')
-        if not self.settings['enabled']:
+        if self.paused():
             return {'should_run': False, 'reason': 'paused'}
+        try:
+            self.budget.provider_ready()
+        except RuntimeError as error:
+            if str(error) == 'model_provider_rate_limited':
+                return {'should_run': False, 'reason': str(error)}
+            raise
         owner = self.store.lease('research_cycle', 1200)
         if not owner:
             return {'should_run': False, 'reason': 'agent_already_running'}
@@ -161,17 +182,17 @@ class Engine:
             raise
 
     def related_evidence(self, market):
-        words = {w for w in re.findall(r'\w+', market['question'].lower()) if len(w) > 3 and w not in ('will', 'have', 'than', 'before', 'after', 'what', 'this', '2026')}
         rows = self.store.rows("SELECT id,url,title,data,published_at,observed_at,source_id FROM evidence WHERE theme=%s AND observed_at>now()-interval '3 days' ORDER BY observed_at DESC LIMIT 250", (market['theme'],))
         scored = []
         for row in rows:
-            overlap = len(words.intersection(re.findall(r'\w+', (row['title'] + ' ' + row['data'].get('text', '')).lower())))
-            if overlap:
-                scored.append((overlap, row))
+            match = relevance(market['question'], row['title'], row['data'].get('text', ''))
+            if match['score']:
+                scored.append((match['score'], match['matched_terms'], row))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{'id': r['id'], 'url': r['url'], 'title': r['title'], 'text': r['data'].get('text', '')[:3500],
                  'source': r['source_id'], 'published_at': str(r['published_at']) if r['published_at'] else None,
-                 'observed_at': str(r['observed_at'])} for _, r in scored[:8]]
+                 'observed_at': str(r['observed_at']), 'matched_terms': matched,
+                 'matching': 'subject_anchors_v1'} for _, matched, r in scored[:8]]
 
     def tool(self, run_id, name):
         row = self.store.one("SELECT * FROM research WHERE id=%s AND status='running'", (run_id,))
@@ -194,9 +215,12 @@ class Engine:
             value = []
             for outcome, token in zip(market['outcomes'], market['tokens']):
                 data, _ = self.request(query('https://clob.polymarket.com/book', {'token_id': token}))
+                if str(data.get('asset_id')) != token:
+                    raise ValueError('book_asset_mismatch')
                 bids = sorted(data.get('bids', []), key=lambda x: number(x.get('price'), 0), reverse=True)[:5]
                 asks = sorted(data.get('asks', []), key=lambda x: number(x.get('price'), 1))[:5]
                 value.append({'outcome': outcome, 'bids': bids, 'asks': asks, 'timestamp': data.get('timestamp'), 'minimum_shares': data.get('min_order_size')})
+            self.store.source_status('clob', 'ok')
         elif name == 'recall_decisions':
             value = self.store.rows('SELECT market_id,theme,status,result,finished_at FROM research WHERE market_id=%s AND id<>%s ORDER BY created_at DESC LIMIT 5', (market['id'], run_id))
         else:
@@ -214,17 +238,67 @@ class Engine:
         if self.settings['sources'].get('manifold'):
             try:
                 data, _ = self.request(query('https://api.manifold.markets/v0/search-markets', {'term': market['question'], 'limit': 3, 'filter': 'open'}))
+                if not isinstance(data, list):
+                    raise ValueError('manifold_schema_changed')
                 result['manifold'] = [{'question': x.get('question'), 'probability': x.get('probability'), 'url': x.get('url'), 'id': x.get('id'),
                                        'note': 'Correspondance et règles non garanties ; ce consensus est un contexte.'} for x in data]
+                self.store.source_status('manifold', 'ok')
             except Exception as error:
                 result['manifold'] = {'error': type(error).__name__}
+                self.store.source_status('manifold', 'error', str(error) if isinstance(error, UpstreamError) else type(error).__name__)
         if self.settings['sources'].get('metaculus') and self.env.get('METACULUS_TOKEN'):
             try:
                 data, _ = self.request(query('https://www.metaculus.com/api/posts/', {'search': market['question'], 'limit': 3}), headers={'Authorization': 'Token ' + self.env['METACULUS_TOKEN']})
                 result['metaculus'] = [{'id': x.get('id'), 'title': x.get('title'), 'question': x.get('question')} for x in data.get('results', [])][:3]
+                self.store.source_status('metaculus', 'ok')
             except Exception as error:
                 result['metaculus'] = {'error': type(error).__name__}
+                self.store.source_status('metaculus', 'error', str(error) if isinstance(error, UpstreamError) else type(error).__name__)
         return result
+
+    def validated_decision(self, context, run_id, raw):
+        result = dict(parse_decision(raw))
+        if result.get('analysis_error'):
+            raise RuntimeError('agent_analysis_failed')
+        market = context['market']
+        probability, lower = number(result.get('probability')), number(result.get('lower_bound'))
+        outcome = result.get('outcome')
+        if result.get('action') not in ('BUY', 'SELL', 'WAIT') or not isinstance(result.get('reason'), str) or not result['reason'].strip():
+            raise ValueError('invalid_decision_schema')
+        if context.get('purpose') == 'positions' and (result['action'] == 'BUY' or outcome != context['position']['outcome']):
+            proposal = dict(result)
+            result.update(action='WAIT', proposal=proposal, validation='position_review_action_not_applicable',
+                          reason='Revue limitée à la position détenue ; aucune nouvelle entrée. ' + result['reason'])
+        if result.get('probability') is not None and (probability is None or not 0 <= probability <= 1 or outcome not in market['outcomes']):
+            raise ValueError('invalid_forecast')
+        known = {x['id'] for x in context['evidence']}
+        searched = self.store.get('tool:' + run_id + ':search_evidence', [])
+        if isinstance(searched, list):
+            known.update(x['evidence_id'] for x in searched if 'evidence_id' in x)
+        cited = result.get('evidence_ids', [])
+        if not isinstance(cited, list) or any(not isinstance(x, str) or x not in known for x in cited):
+            raise ValueError('unknown_evidence_reference')
+        if result['action'] != 'WAIT':
+            if (not cited or not result.get('counterargument') or probability is None or lower is None
+                    or not 0 <= lower <= probability <= 1 or result.get('rules_checked') is not True):
+                proposal = dict(result)
+                result.update(action='WAIT', proposal=proposal, validation='trade_hypothesis_incomplete',
+                              reason='Proposition non exécutée : preuves, incertitude ou règles incomplètes. ' + result['reason'])
+        # Store a JSON number consistently even when the provider emitted a string.
+        result['probability'], result['lower_bound'] = probability, lower
+        return result
+
+    def stage_decision(self, run_id, raw):
+        row = self.store.one("SELECT * FROM research WHERE id=%s AND status='running'", (run_id,))
+        if not row or (now() - row['created_at']).total_seconds() > 1200:
+            raise ValueError('research_not_running_or_expired')
+        result = self.validated_decision(row['context'], run_id, raw)
+        key = 'decision:' + run_id
+        self.store.execute('INSERT INTO hub_meta(key,value) VALUES(%s,%s) ON CONFLICT DO NOTHING', (key, Jsonb(result)))
+        if self.store.get(key) != result:
+            raise ValueError('decision_already_staged_with_different_content')
+        return {'status': 'decision_saved', 'action': result['action'], 'execution': 'not_submitted',
+                'validation': result.get('validation')}
 
     def complete(self, run_id, raw):
         row = self.store.one('SELECT * FROM research WHERE id=%s', (run_id,))
@@ -236,37 +310,13 @@ class Engine:
         try:
             if (now() - row['created_at']).total_seconds() > 1200:
                 raise ValueError('research_expired')
-            result = parse_decision(raw)
-            if result.get('analysis_error'):
-                raise RuntimeError('agent_analysis_failed')
+            staged = self.store.get('decision:' + run_id)
+            result = self.validated_decision(context, run_id, staged if staged is not None else raw)
+            if staged is not None:
+                result['decision_origin'] = 'agent_decision_tool'
             market = context['market']
             probability, lower = number(result.get('probability')), number(result.get('lower_bound'))
             outcome = result.get('outcome')
-            if result.get('action') not in ('BUY', 'SELL', 'WAIT') or not isinstance(result.get('reason'), str):
-                raise ValueError('invalid_decision_schema')
-            if context.get('purpose') == 'positions' and (result['action'] == 'BUY' or result.get('outcome') != context['position']['outcome']):
-                proposal = dict(result)
-                result.update(action='WAIT', proposal=proposal, validation='position_review_action_not_applicable',
-                              reason='Revue limitée à la position détenue ; aucune nouvelle entrée. ' + result['reason'])
-            if probability is not None:
-                if not 0 <= probability <= 1 or outcome not in market['outcomes']:
-                    raise ValueError('invalid_forecast')
-            known = {x['id'] for x in context['evidence']}
-            searched = self.store.get('tool:' + run_id + ':search_evidence', [])
-            if isinstance(searched, list):
-                known.update(x['evidence_id'] for x in searched if 'evidence_id' in x)
-            cited = result.get('evidence_ids', [])
-            if not isinstance(cited, list) or any(not isinstance(x, str) or x not in known for x in cited):
-                raise ValueError('unknown_evidence_reference')
-            if result['action'] != 'WAIT':
-                if (not cited or not result.get('counterargument') or probability is None or lower is None
-                        or not 0 <= lower <= probability <= 1 or result.get('rules_checked') is not True):
-                    # A rejected proposal is a normal business outcome, not a
-                    # failed workflow. Preserve what the agent proposed for review.
-                    proposal = dict(result)
-                    result.update(action='WAIT', proposal=proposal,
-                                  validation='trade_hypothesis_incomplete',
-                                  reason='Proposition non exécutée : preuves, incertitude ou règles incomplètes. ' + result['reason'])
             if probability is not None:
                 baseline = market['prices'][market['outcomes'].index(outcome)]
                 self.store.execute('INSERT INTO forecasts(id,market_id,event_id,theme,probability,baseline,outcome,model,strategy) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
@@ -276,7 +326,15 @@ class Engine:
             self.store.execute("UPDATE research SET status='complete',finished_at=now(),result=%s WHERE id=%s", (Jsonb(result), run_id))
             return {'status': 'complete', 'result': result}
         except Exception as error:
-            self.store.execute("UPDATE research SET status='error',finished_at=now(),error=%s WHERE id=%s", (type(error).__name__, run_id))
+            code = str(error) if isinstance(error, (ValueError, RuntimeError)) and re.fullmatch(r'[a-z][a-z0-9_]{1,80}', str(error)) else type(error).__name__
+            if code == 'agent_analysis_failed':
+                try:
+                    self.budget.provider_ready()
+                except RuntimeError as provider_error:
+                    if str(provider_error) == 'model_provider_rate_limited':
+                        code = str(provider_error)
+            diagnostic = {'validation': code, 'output_excerpt': str(raw)[:5000] if isinstance(raw, str) else None}
+            self.store.execute("UPDATE research SET status='error',finished_at=now(),error=%s,result=%s WHERE id=%s", (code, Jsonb(diagnostic), run_id))
             raise
         finally:
             self.store.release('research_cycle', context['lease_owner'])
@@ -310,6 +368,8 @@ class Engine:
     def paper_decision(self, research_id, market, decision):
         if self.settings['execution_mode'] != 'paper':
             raise ValueError('live_dispatch_unavailable')
+        if decision['action'] == 'BUY' and self.paused():
+            return {'status': 'paused'}
         outcome = decision['outcome']
         token = market['tokens'][market['outcomes'].index(outcome)]
         intent = digest([research_id, market['id'], outcome, decision['action']])
@@ -438,9 +498,9 @@ class Engine:
         else:
             raise ValueError('account_positions_incomplete')
         normalized = [{k: p.get(k) for k in ['title', 'outcome', 'size', 'avgPrice', 'curPrice', 'currentValue', 'cashPnl', 'realizedPnl', 'redeemable', 'asset', 'conditionId']} for p in positions]
-        return {'at': iso(), 'cash': number(balance.get('balance'), 0) / 1e6, 'positions': normalized,
-                'open_orders': len(orders), 'trades': len(trades), 'valuation': 'API indicative, pas une liquidation garantie',
-                'position_value': sum(number(x.get('currentValue'), 0) for x in positions), 'complete': True}
+        return {'at': iso(), **cash_summary(balance, orders), 'positions': normalized,
+                'trades': len(trades), 'valuation': 'API indicative, pas une liquidation garantie',
+                'position_value': positions_value(positions), 'complete': True, 'pnl_complete': False}
 
     def reconcile(self):
         errors = []
@@ -449,7 +509,9 @@ class Engine:
                 book, _ = self.request(query('https://clob.polymarket.com/book', {'token_id': p['token']}))
                 bids = [number(x.get('price')) for x in book.get('bids', [])]
                 bids = [x for x in bids if x is not None and 0 <= x <= 1]
-                if str(book.get('asset_id')) != p['token'] or not bids:
+                timestamp = number(book.get('timestamp'))
+                if (str(book.get('asset_id')) != p['token'] or not bids or timestamp is None
+                        or not -5 <= now().timestamp() - timestamp / 1000 <= 60):
                     raise ValueError('invalid_mark')
                 self.store.execute('UPDATE paper_positions SET mark=%s WHERE id=%s', (max(bids), p['id']))
             except Exception:
@@ -458,8 +520,10 @@ class Engine:
             account = self.account()
             self.store.execute('INSERT INTO account_snapshots(data) VALUES(%s)', (Jsonb(account),))
             self.store.put('account_error', None)
+            self.store.source_status('poly_account', 'ok')
         except Exception as error:
             self.store.put('account_error', {'at': iso(), 'error': type(error).__name__})
+            self.store.source_status('poly_account', 'error', str(error) if isinstance(error, UpstreamError) else type(error).__name__)
         self.store.put('paper_mark_errors', errors)
         return {'paper_mark_errors': len(errors), 'account_error': self.store.get('account_error')}
 
@@ -472,64 +536,19 @@ class Engine:
             return {'status': 'unavailable'}
 
     def report(self):
-        p = self.paper_portfolio()
-        account = self.store.one('SELECT at,data FROM account_snapshots ORDER BY id DESC LIMIT 1')
-        lines = ['CloddsBot + n8n — bilan quotidien', 'Recherche multi-thèmes • nouvelle chaîne en simulation']
-        if account:
-            a = account['data']
-            lines += [f"Compte réel (lecture) : {a['cash']:.2f} pUSD disponibles ; positions {a['position_value']:.2f}",
-                      f"Ordres ouverts : {a['open_orders']} ; positions : {len(a['positions'])}",
-                      'État du compte daté : ' + str(account['at'])]
-        else:
-            lines += ['Compte réel : lecture non encore disponible.']
-        if self.store.get('account_error'):
-            lines += ['Lecture actuelle du compte indisponible : dernier état ci-dessus non confirmé.']
-        lines += [f"Simulation n8n : {p['equity']:.2f}/{p['capital']:.2f} ; réalisé {p['realized']:+.2f} ; latent {p['unrealized']:+.2f}",
-                  f"Engagé simulé : {p['exposure']:.2f} ; positions : {p['open']}"]
-        counts = self.store.rows("SELECT theme,count(*) n FROM research WHERE created_at>now()-interval '1 day' GROUP BY theme ORDER BY n DESC")
-        lines += ['Analyses du jour : ' + (', '.join(f"{x['theme']} {x['n']}" for x in counts) or 'aucune')]
-        latest = self.store.one("SELECT result FROM research WHERE status='complete' ORDER BY finished_at DESC LIMIT 1")
-        if latest:
-            lines += ['Dernière décision : ' + str(latest['result'].get('reason', ''))[:450]]
-        try:
-            budget = self.budget.usage()
-            lines += [f"IA partagée (journal) : {budget['day']:.4f}/{budget['daily_limit']:.2f} $ jour ; {budget['month']:.4f}/{budget['monthly_limit']:.2f} $ mois"]
-        except Exception:
-            lines += ['Budget IA partagé : lecture indisponible.']
-        problems = self.store.rows("SELECT id,status FROM sources WHERE status IN ('error','configuration_required')")
-        if problems:
-            lines += ['Sources à vérifier/configurer : ' + ', '.join(x['id'] for x in problems)]
-        lines += ['Aucun ordre réel soumis par cette chaîne. Le P&L net réel complet reste à rapprocher des frais et mouvements externes.']
-        return '\n'.join(lines)[:3900]
+        return reporting.build(self)
+
+    def send_digest(self, key, prefix=''):
+        return reporting.send(self, key, prefix)
 
     def daily_digest(self):
-        local = now().astimezone(ZoneInfo(self.settings['timezone']))
-        if not self.settings.get('digest_enabled') or local.hour != self.settings['digest_hour']:
-            return {'delivery': 'not_scheduled'}
-        key = 'daily:' + local.date().isoformat()
-        self.store.execute('INSERT INTO notifications(key,text) VALUES(%s,%s) ON CONFLICT DO NOTHING', (key, self.report()))
-        claimed = self.store.one("UPDATE notifications SET status='sending',attempts=attempts+1 WHERE key=%s AND status='pending' RETURNING text", (key,))
-        if not claimed:
-            return {'delivery': 'already_attempted'}
-        if not self.env.get('TELEGRAM_BOT_TOKEN') or not self.settings.get('telegram_chat_id'):
-            self.store.execute("UPDATE notifications SET status='pending',error='telegram_configuration_missing' WHERE key=%s", (key,))
-            return {'delivery': 'configuration_required'}
-        try:
-            data, _ = self.request('https://api.telegram.org/bot' + self.env['TELEGRAM_BOT_TOKEN'] + '/sendMessage',
-                                   body={'chat_id': self.settings['telegram_chat_id'], 'text': claimed['text'], 'disable_web_page_preview': True})
-            if data.get('ok') is not True:
-                raise RuntimeError('telegram_rejected')
-            self.store.execute("UPDATE notifications SET status='sent',sent_at=now(),error=NULL WHERE key=%s", (key,))
-            return {'delivery': 'sent'}
-        except Exception:
-            # Do not blindly retry an ambiguous send and duplicate the user's digest.
-            self.store.execute("UPDATE notifications SET status='uncertain',error='delivery_not_confirmed' WHERE key=%s", (key,))
-            raise
+        return reporting.scheduled(self)
 
     def monitor(self):
         stale = self.store.rows("SELECT id,status FROM sources WHERE status='error' OR (last_success<now()-interval '2 days' AND status='ok')")
         expired = self.store.execute("UPDATE research SET status='expired',finished_at=now(),error='agent_timeout' WHERE status='running' AND created_at<now()-interval '25 minutes'")
-        return {'source_issues': stale, 'expired_research': expired, 'at': iso()}
+        uncertain = self.store.execute("UPDATE notifications SET status='uncertain',error='sender_interrupted' WHERE status='sending' AND attempted_at<now()-interval '15 minutes'")
+        return {'source_issues': stale, 'expired_research': expired, 'uncertain_notifications': uncertain, 'at': iso()}
 
     def registry_review(self):
         return {'sources': len(self.registry), 'configuration_required': [x['id'] for x in self.registry if x.get('key') and not self.env.get(x['key'])],
@@ -544,7 +563,8 @@ class Engine:
         for s in sources:
             s['configuration_present'] = not s['data'].get('key') or bool(self.env.get(s['data']['key']))
             s['enabled'] = self.settings['sources'].get(s['id'], False)
-        return {'at': iso(), 'mode': 'paper', 'enabled': self.settings['enabled'], 'budget': budget,
+        return {'at': iso(), 'mode': 'paper', 'enabled': not self.paused(), 'configured_enabled': self.settings['enabled'], 'budget': budget,
+                'digest': reporting.status(self),
                 'sources': sources, 'paper': self.paper_portfolio(), 'observer': self.observer_reference(),
                 'universe': self.store.get('universe_last_complete'), 'universe_progress': self.store.get('universe_progress'),
                 'themes': self.store.rows('SELECT theme,count(*) markets FROM markets WHERE active GROUP BY theme ORDER BY markets DESC'),

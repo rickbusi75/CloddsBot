@@ -88,6 +88,23 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(self.observer.db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 3)
         self.assertEqual(self.observer.db.execute('SELECT COUNT(*) FROM costs').fetchone()[0], 0)
 
+    def test_consolidated_owner_suppresses_scheduled_and_pending_digests_but_not_failure_alerts(self):
+        (Path(self.tmp.name) / 'control.json').write_text('{"paused":true}')
+        self.observer.put('digestOwner', 'research-hub')
+        self.observer.enqueue('digest:2026-10-17:09', 'Old pending report')
+        self.observer.enqueue('digest:2026-10-17:20', 'Another pending report')
+        self.observer.enqueue('failure:2026-10-17', 'Important failure')
+        self.observer.env = {'TELEGRAM_BOT_TOKEN': 'test'}
+        self.observer.config = {'channels': {'telegram': {'allowFrom': ['123']}}}
+        with patch.object(worker, 'utcnow', return_value=dt.datetime.fromisoformat('2026-10-18T18:05:00+00:00')), \
+             patch.object(self.observer, 'reconcile'), patch.object(worker, 'request', return_value=({'ok': True}, {})) as send:
+            self.observer.tick()
+            self.observer.deliver()
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(send.call_args.kwargs['body']['text'], 'Important failure')
+        self.assertEqual(self.observer.db.execute("SELECT count(*) FROM outbox WHERE key='digest:2026-10-18:20'").fetchone()[0], 0)
+        self.assertEqual(self.observer.db.execute("SELECT count(*) FROM outbox WHERE key LIKE 'digest:%' AND sent IS NULL").fetchone()[0], 2)
+
     def test_watchdog_alerts_after_three_failures_and_once_on_recovery(self):
         state = {}
         for i in range(3):

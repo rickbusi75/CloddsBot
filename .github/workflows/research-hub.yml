@@ -1,9 +1,9 @@
 name: Research Hub
 on:
   pull_request:
-    paths: ['ops/research-hub/**', '.github/workflows/research-hub.yml']
+    paths: ['ops/research-hub/**', 'ops/autonomy/**', '.github/workflows/research-hub.yml']
   push:
-    paths: ['ops/research-hub/**', '.github/workflows/research-hub.yml']
+    paths: ['ops/research-hub/**', 'ops/autonomy/**', '.github/workflows/research-hub.yml']
 permissions:
   contents: read
 jobs:
@@ -30,6 +30,8 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -m unittest -v test_hub
+      - run: python -m unittest -v test_worker
+        working-directory: ops/autonomy
       - run: python -m unittest -v test_integration
         env:
           DATABASE_URL: postgresql://research:research_validation_only@127.0.0.1:5432/research

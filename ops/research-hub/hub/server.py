@@ -39,7 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/health':
                 self.engine.store.one('SELECT 1')
-                return self.respond(200, {'status': 'healthy', 'version': '0.1.0', 'mode': 'paper'})
+                return self.respond(200, {'status': 'healthy', 'version': '0.3.1', 'mode': 'paper'})
             if path in ('/', '/app.js', '/style.css'):
                 name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}[path]
                 mime = {'/': 'text/html; charset=utf-8', '/app.js': 'text/javascript; charset=utf-8', '/style.css': 'text/css; charset=utf-8'}[path]
@@ -72,6 +72,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.engine.claim(str(data.get('purpose', 'scan')))
             elif path == '/v1/research/complete':
                 result = self.engine.complete(data['run_id'], data['result'])
+            elif path == '/v1/research/decision':
+                result = self.engine.stage_decision(data['run_id'], data['decision'])
             elif path == '/v1/tools':
                 result = {'result': self.engine.tool(str(data['run_id']), str(data['name']))}
             elif path in ('/llm/v1/chat/completions', '/llm/chat/completions'):

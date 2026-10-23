@@ -3,8 +3,10 @@ const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const money=x=>Number(x||0).toFixed(2);
 const labels={ok:'Connectée',error:'À vérifier',disabled:'Désactivée',configuration_required:'À configurer',new:'En attente'};
 async function refresh(){try{const r=await fetch('v1/status',{cache:'no-store'});if(!r.ok)throw Error();const s=await r.json();
-$('#fresh').textContent='Actualisé à '+new Date(s.at).toLocaleTimeString('fr-FR');
-const metrics=[['Marchés observés',s.themes.reduce((n,t)=>n+Number(t.markets),0),s.themes.length+' thèmes'],['Portefeuille simulé',money(s.paper.equity)+' pUSD','Réalisé '+money(s.paper.realized)+' · latent '+money(s.paper.unrealized)],['IA partagée aujourd’hui',money(s.budget.day)+' $','Plafond '+money(s.budget.daily_limit)+' $'],['Compte réel · disponible',s.account?money(s.account.data.cash)+' pUSD':'À rapprocher','Lecture uniquement · aucun ordre de cette chaîne']];
+$('#fresh').textContent=(s.enabled?'':'Recherche en pause · ')+'Actualisé à '+new Date(s.at).toLocaleTimeString('fr-FR');
+const a=s.account?.data,available=a?.available_cash??(a?.open_orders===0?a.cash:null);
+const accountFresh=s.account&&!s.account_error&&(Date.now()-new Date(s.account.at).getTime()<900000);
+const metrics=[['Marchés observés',s.themes.reduce((n,t)=>n+Number(t.markets),0),s.themes.length+' thèmes'],['Portefeuille simulé',money(s.paper.equity)+' pUSD','Réalisé '+money(s.paper.realized)+' · latent '+money(s.paper.unrealized)],['IA partagée aujourd’hui',money(s.budget.day)+' $','Plafond '+money(s.budget.daily_limit)+' $'],['Compte réel · disponible hors frais',available!==null?money(available)+' pUSD':'À rapprocher',accountFresh?'Lecture uniquement · aucun ordre de cette chaîne':'Dernière lecture non confirmée']];
 $('#metrics').innerHTML=metrics.map(([a,b,c])=>`<div class="metric"><small>${esc(a)}</small><strong>${esc(b)}</strong><small>${esc(c)}</small></div>`).join('');
 $('#themes').innerHTML=s.themes.map(t=>`<div class="row">${esc(t.theme)} <span class="muted">· ${esc(t.markets)} marchés</span></div>`).join('')||'<p class="muted">Premier parcours en attente.</p>';
 $('#coverage').textContent=s.universe?'Dernier parcours complet : '+new Date(s.universe.at).toLocaleString('fr-FR'):'Parcours initial en progression ; la couverture n’est pas encore complète.';
@@ -12,4 +14,5 @@ $('#research').innerHTML=s.research.map(x=>`<div class="row"><span class="badge"
 $('#sources').innerHTML=s.sources.map(x=>{const st=!x.enabled?'disabled':!x.configuration_present?'configuration_required':x.status;return `<div class="source"><h3>${esc(x.data.name)}</h3><span class="badge ${esc(st)}">${esc(labels[st]||st)}</span><small>${esc(x.data.themes.join(', '))}</small></div>`}).join('');
 $('#jobs').innerHTML=s.jobs.map(j=>`<div class="row">${esc(j.kind)} · ${esc(j.status)}<br><span class="muted">${esc(new Date(j.started_at).toLocaleString('fr-FR'))}${j.error?' · '+esc(j.error):''}</span></div>`).join('');
 $('#account').textContent=s.account_error?'Dernière lecture du compte non confirmée : vérifier la connexion.':s.account?'Positions réelles : '+s.account.data.positions.length+' ; ordres ouverts : '+s.account.data.open_orders:'';
+$('#digest-status').textContent=s.digest?.enabled&&s.digest.owner==='research-hub'?'Bilan Telegram quotidien activé : '+s.digest.hour+' h · '+s.digest.timezone+(s.digest.last?.status==='sent'?' · dernier envoi confirmé':''):'Bilan consolidé : transfert de l’envoi à terminer.';
 }catch(e){$('#fresh').textContent='Données indisponibles — vérifier le tunnel';}}refresh();setInterval(refresh,30000);
