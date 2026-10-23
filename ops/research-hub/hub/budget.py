@@ -77,6 +77,16 @@ class Budget:
                 if overrun:
                     connection.execute("INSERT INTO kv(key,value) VALUES('budgetFault','true') ON CONFLICT(key) DO UPDATE SET value='true'")
 
+    def settle_uncertain(self, reservation):
+        """A call that failed after reserving: the provider may still have billed
+        the attempt, so the reserved amount stays counted conservatively, with a
+        state that distinguishes the uncertain cost from pending in-flight
+        reservations in later reconciliations."""
+        with self.connection() as connection:
+            row = connection.execute('SELECT reserved FROM costs WHERE id=?', (reservation,)).fetchone()
+            if row:
+                connection.execute("UPDATE costs SET actual=?,state='hub_uncertain' WHERE id=?", (row[0], reservation))
+
     def completion(self, body):
         self.provider_ready()
         key = self.env.get('OPENROUTER_API_KEY')
@@ -124,6 +134,9 @@ class Budget:
                 with self.connection() as connection:
                     connection.execute("INSERT INTO kv VALUES('hubProviderRetryAt',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                                        (json.dumps(iso(now() + dt.timedelta(minutes=5))),))
+            # A failed attempt may still have been billed; settle conservatively
+            # at the reserved amount so no ambiguous pending reservation stays behind.
+            self.settle_uncertain(reservation)
             raise
         actual = number(response.get('usage', {}).get('cost'))
         self.settle(reservation, actual)

@@ -105,6 +105,29 @@ class BudgetTests(unittest.TestCase):
         self.budget.reserve(.04, {'usage_daily': 0, 'usage_monthly': 0})
         self.assertAlmostEqual(self.budget.usage()['day'], .04)
 
+    def test_failed_call_settles_uncertain_at_reserved_amount(self):
+        self.settings['model'] = 'fixture/model'
+        def provider(url, **kwargs):
+            if url.endswith('/models'):
+                return {'data': [{'id': 'fixture/model', 'supported_parameters': [], 'pricing': {'prompt': '0.0000001', 'completion': '0.0000002'}}]}, {}
+            if url.endswith('/key'):
+                return {'data': {'usage_daily': 0, 'usage_monthly': 0}}, {}
+            raise UpstreamError(500)
+        budget = Budget(self.settings, {'OPENROUTER_API_KEY': 'fixture'}, self.path, transport=provider)
+        with self.assertRaises(UpstreamError):
+            budget.completion({'model': 'fixture/model', 'max_tokens': 1800, 'messages': [{'role': 'user', 'content': 'fixture'}]})
+        with sqlite3.connect(self.path) as c:
+            row = c.execute("SELECT state, actual, reserved FROM costs WHERE state LIKE 'hub_%'").fetchone()
+        self.assertEqual(row[0], 'hub_uncertain')
+        self.assertEqual(row[1], row[2])
+        # The uncertain amount keeps counting conservatively in the budget.
+        self.assertAlmostEqual(budget.usage()['day'], row[2])
+
+    def test_settle_uncertain_ignores_unknown_reservation(self):
+        self.budget.settle_uncertain(999)
+        with sqlite3.connect(self.path) as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM costs WHERE state='hub_uncertain'").fetchone()[0], 0)
+
     def test_real_cost_settlement(self):
         rid = self.budget.reserve(.04, {'usage_daily': 0, 'usage_monthly': 0})
         self.budget.settle(rid, .001)
