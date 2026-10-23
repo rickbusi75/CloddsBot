@@ -328,6 +328,37 @@ class IntegrationTests(unittest.TestCase):
         urls = [x['url'] for x in evidence]
         self.assertEqual(urls.count('https://example.com/release'), 1)
 
+    def test_body_only_subject_is_excluded_from_dossier_and_agent_tool(self):
+        self.market['question'] = 'Will Together win the most seats in the 2026 Israeli legislative election?'
+        self.market['theme'] = 'politics'
+        self.store.execute('UPDATE markets SET question=%s,theme=%s,data=%s WHERE id=%s',
+                           (self.market['question'], 'politics', Jsonb(self.market), '100'))
+        unrelated = {'url': 'https://example.com/putin', 'title': 'Vladimir Putin - Wikipedia',
+                     'text': 'Israeli legislative seats are mentioned here.', 'theme': 'politics'}
+        relevant = {'url': 'https://example.com/israeli-election', 'title': '2026 Israeli legislative election',
+                    'text': 'Together is one of the parties.', 'theme': 'politics'}
+        self.store.evidence('brave', unrelated)
+        self.store.evidence('brave', relevant)
+        dossier = self.engine.related_evidence(self.market)
+        self.assertEqual([x['url'] for x in dossier], [relevant['url']])
+        self.assertEqual(dossier[0]['matching'], 'subject_anchors_v2_title')
+        run = self.claim()
+        with patch.object(self.engine.collectors, 'search', return_value=[unrelated, relevant]):
+            result = self.engine.tool(run['run_id'], 'search_evidence')
+        self.assertEqual([x['url'] for x in result], [relevant['url']])
+
+    def test_recheck_rejects_multiple_body_terms_without_title_subject(self):
+        run = self.claim()
+        self.engine.complete(run['run_id'], self.decision())
+        self.store.execute('UPDATE markets SET question=%s WHERE id=%s',
+                           ('Will inflation cause a recession?', '100'))
+        self.store.evidence('brave', {'url': 'https://example.com/oil', 'title': 'Oil supply report',
+                                      'text': 'Inflation and recession mentioned in passing.', 'theme': 'economics'})
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 0)
+        self.store.evidence('bls', {'url': 'https://example.com/new-inflation', 'title': 'Inflation outlook',
+                                    'text': 'Fresh official data.', 'theme': 'economics'})
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 1)
+
     def test_digest_owner_and_dst_deduplicate_across_restart(self):
         self.prepare_digest()
         instant = dt.datetime.fromisoformat('2026-10-25T19:05:00+00:00')

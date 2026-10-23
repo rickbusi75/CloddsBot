@@ -202,7 +202,7 @@ class Engine:
             picked.append({'id': row['id'], 'url': row['url'], 'title': row['title'], 'text': row['data'].get('text', '')[:3500],
                            'source': row['source_id'], 'published_at': str(row['published_at']) if row['published_at'] else None,
                            'observed_at': str(row['observed_at']), 'matched_terms': matched,
-                           'matching': 'subject_anchors_v1'})
+                           'matching': 'subject_anchors_v2_title'})
             if len(picked) >= 8:
                 break
         return picked
@@ -599,9 +599,9 @@ class Engine:
     def recheck(self):
         """R14/T07 — flag dossiers whose decision may be affected by a newer
         publication: evidence observed after the decision time that matches the
-        market question with the subject-anchor filter. A score >= 2 means the
-        named subject or a key term appears in the title; body-only matches
-        stay below the bar to keep the review list actionable."""
+        market question with the subject-anchor filter. This filter requires
+        a named subject or an informative question term in the title; body-only
+        mentions are excluded regardless of how many terms they match."""
         rows = self.store.rows("""SELECT r.id, r.market_id, r.finished_at, m.question, m.theme
             FROM research r JOIN markets m ON m.id=r.market_id
             WHERE r.status='complete' AND r.finished_at>now()-interval '3 days'

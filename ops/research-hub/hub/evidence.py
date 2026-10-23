@@ -15,10 +15,14 @@ senate house governor government candidate party nomination nominee office
 le la les un une des du de et ou en au aux sur pour avant apres sera est
 '''.split())
 
+# Explicit lexical variants measured in dossiers; avoid broad stemming that
+# could merge unrelated names. Other spellings remain a recall limitation.
+ALIASES = {'israeli': 'israel'}
+
 
 def words(text):
     text = ''.join(c for c in unicodedata.normalize('NFKD', str(text)) if not unicodedata.combining(c)).casefold()
-    return {x for x in re.findall(r'[^\W_]+', text, re.UNICODE)
+    return {ALIASES.get(x, x) for x in re.findall(r'[^\W_]+', text, re.UNICODE)
             if len(x) >= 3 and not x.isdecimal() and x not in STOP}
 
 
@@ -34,7 +38,12 @@ def relevance(question, title, text=''):
             anchors.update(words(token))
     title_terms, body_terms = words(title), words(text)
     matches = terms & (title_terms | body_terms)
-    if not matches or (anchors and not anchors.intersection(title_terms | body_terms)):
+    # A passing mention buried in a long page is not evidence about its subject.
+    # Require a named question anchor in the title; for questions without named
+    # anchors require an informative question term there. Body terms still rank
+    # documents that pass, but cannot make an unrelated headline relevant.
+    title_subjects = anchors or terms
+    if not matches or not title_subjects.intersection(title_terms):
         return {'score': 0, 'matched_terms': []}
     return {'score': len(matches) + 3 * len(terms & title_terms) + 2 * len(anchors & title_terms),
             'matched_terms': sorted(matches)}

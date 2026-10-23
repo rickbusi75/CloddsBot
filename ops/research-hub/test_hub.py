@@ -203,6 +203,25 @@ class EvidenceAndAccountTests(unittest.TestCase):
         self.assertEqual(relevance('Will the next President win?', 'Next president wins')['score'], 0)
         self.assertGreater(relevance('Will inflation be above 3%?', 'Inflation rises')['score'], 0)
 
+    def test_body_mentions_cannot_admit_an_unrelated_named_subject(self):
+        question = 'Will Together win the most seats in the 2026 Israeli legislative election?'
+        self.assertEqual(relevance(question, 'Vladimir Putin - Wikipedia',
+                                   'Israeli legislative seats are discussed here.')['score'], 0)
+        self.assertGreater(relevance(question, '2026 Israeli legislative election',
+                                     'Together is one of the parties.')['score'], 0)
+        self.assertGreater(relevance(question, 'Israel Elections 2026: Main Opponents',
+                                     'Candidates for the upcoming election.')['score'], 0)
+        self.assertEqual(relevance('Will OpenAI have the best AI model?',
+                                   'Best Anthropic Models', 'OpenAI has a competing model.')['score'], 0)
+        self.assertGreater(relevance('Will OpenAI have the best AI model?',
+                                     'Google leads Anthropic and OpenAI in model ranking')['score'], 0)
+
+    def test_multiple_body_terms_do_not_trigger_generic_subject_relevance(self):
+        self.assertEqual(relevance('Will inflation cause a recession?', 'Oil supply report',
+                                   'Inflation and recession are mentioned in passing.')['score'], 0)
+        self.assertGreater(relevance('Will inflation cause a recession?', 'Inflation outlook',
+                                     'Recession risks remain.')['score'], 0)
+
     def test_cash_excludes_remaining_buy_orders_and_deduplicates_pages(self):
         buy = {'id': 'buy', 'side': 'BUY', 'price': '.4', 'original_size': '10', 'size_matched': '3'}
         sell = {'id': 'sell', 'side': 'SELL', 'price': '.7', 'originalSize': '4', 'sizeMatched': '0'}
