@@ -1,5 +1,13 @@
 # Recherche multi-thèmes — n8n + CloddsBot
 
+**Reprise au 23 octobre 2026 :** lire [HANDOVER.md](HANDOVER.md) pour l'état
+déployé, la provenance, les preuves, les limites et les travaux ouverts.
+Les commandes d'installation ci-dessous décrivent les outils disponibles ;
+elles ne constituent pas une séquence à rejouer sur l'instance déjà active.
+Le modèle demandé est OpenRouter `z-ai/glm-5.3-flash`, déjà configuré sur les
+agents du projet via le proxy commun. Une mise à jour de documentation n'est
+pas un redéploiement.
+
 Service de collecte et mémoire PostgreSQL, dix workflows natifs n8n, orchestrateur
 avec spécialiste et contradicteur, portefeuille simulé et lecture du compte réel.
 Le budget LLM réutilise le journal SQLite de l'observer et du chat existants.
