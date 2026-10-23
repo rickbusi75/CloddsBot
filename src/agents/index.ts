@@ -790,6 +790,21 @@ function buildTools(): ToolDefinition[] {
       },
     },
 
+    // n8n automation tools
+    {
+      name: 'n8n_api',
+      description: 'Call the local n8n REST API v1 to inspect or manage automations: list/get/create/update workflows, activate/deactivate them, trigger runs, and read executions. Authentication is handled internally via N8N_API_KEY.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          method: { type: 'string', description: 'HTTP method (default GET)', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+          path: { type: 'string', description: 'API path starting with "/" (e.g. "/workflows?limit=20", "/workflows/{id}/activate")' },
+          body: { type: 'object', description: 'Optional JSON request body for POST/PUT/PATCH (e.g. workflow JSON with name, nodes, connections)' },
+        },
+        required: ['path'],
+      },
+    },
+
     // Edge detection tools
     {
       name: 'analyze_edge',
@@ -16466,6 +16481,45 @@ async function executeTool(
         } catch (err: unknown) {
           const error = err as Error;
           return JSON.stringify({ error: 'Transcription failed', details: error.message });
+        }
+      }
+      case 'n8n_api': {
+        try {
+          const base = (process.env.N8N_BASE_URL || 'http://172.17.0.1:5678/api/v1').replace(/\/+$/, '');
+          const apiKey = process.env.N8N_API_KEY || '';
+          if (!apiKey) {
+            return JSON.stringify({ error: 'N8N_API_KEY not configured (bot.env)' });
+          }
+          const reqPath = String(toolInput.path || '');
+          if (!reqPath.startsWith('/') || reqPath.includes('..')) {
+            return JSON.stringify({ error: 'path must start with "/" and must not contain ".."' });
+          }
+          const method = String(toolInput.method || 'GET').toUpperCase();
+          if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+            return JSON.stringify({ error: `Unsupported method: ${method}` });
+          }
+          const hasBody = toolInput.body !== undefined && method !== 'GET' && method !== 'DELETE';
+          const res = await fetch(base + reqPath, {
+            method,
+            headers: {
+              'X-N8N-API-KEY': apiKey,
+              'Content-Type': 'application/json',
+              accept: 'application/json',
+            },
+            body: hasBody ? JSON.stringify(toolInput.body) : undefined,
+            signal: AbortSignal.timeout(30000),
+          });
+          const text = await res.text();
+          let data: unknown = text;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            // keep raw text
+          }
+          return JSON.stringify({ status: res.status, ok: res.ok, data });
+        } catch (err: unknown) {
+          const error = err as Error;
+          return JSON.stringify({ error: 'n8n API request failed', details: error.message });
         }
       }
       case 'sql_query': {
