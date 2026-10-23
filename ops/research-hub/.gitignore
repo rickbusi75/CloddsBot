@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+compose.private.yaml
+*.env
+*.dump
+private/

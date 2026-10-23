@@ -45,6 +45,6 @@ CloddsBot peut piloter l'instance n8n du labo (automatisations, veille, webhooks
 
 ## Safety
 
-- La création/modification de workflows n8n ne touche jamais aux fonds ni aux ordres de trading.
+- Un workflow peut appeler des services financiers : sa création ou son activation n'est pas, à elle seule, une garantie d'absence d'effet sur les fonds. Vérifier les cibles, le mode et les outils du workflow concerné.
 - Les clés n8n ne sont jamais affichées dans les réponses.
 - Les endpoints `credentials` ne renvoient que des noms/types, jamais de valeurs.
