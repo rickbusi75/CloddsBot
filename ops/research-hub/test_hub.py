@@ -10,7 +10,7 @@ import unittest
 from hub.budget import Budget
 from hub.collectors import rss_items
 from hub.engine import parse_decision
-from hub.accounting import cash_summary, positions_value
+from hub.accounting import cash_summary, positions_value, net_reconciliation, activity_flows
 from hub.evidence import relevance
 from hub.common import UpstreamError, now, iso
 from hub.markets import devig, final_result, normalize, simulate_fill, theme_of
@@ -187,6 +187,71 @@ class EvidenceAndAccountTests(unittest.TestCase):
         for rows in [[{'asset': 'a', 'size': 1}], [{'asset': 'a', 'size': 1, 'currentValue': 1}]*2]:
             with self.assertRaises(ValueError):
                 positions_value(rows)
+
+    def test_net_reconciliation_residual_math(self):
+        # One BUY: deposits = cash + outflow.
+        result = net_reconciliation('100.0', [{'side': 'BUY', 'usdcSize': '10'}])
+        self.assertEqual(result['deposits'], 110.0)
+        self.assertEqual(result['trade_outflows'], 10.0)
+        self.assertEqual(result['trade_inflows'], 0.0)
+        self.assertTrue(result['pnl_complete'])
+
+        # Mixed flows: BUY and SELL, plus splits (out), merges and redeems (in).
+        result = net_reconciliation(
+            '100.0',
+            [{'side': 'BUY', 'usdcSize': '10'}, {'side': 'SELL', 'usdcSize': '5'}],
+            splits=['5'], merges=['3'], redeems=['4'])
+        self.assertEqual(result['deposits'], 103.0)
+        self.assertEqual(result['trade_outflows'], 10.0)
+        self.assertEqual(result['event_outflows'], 5.0)
+        self.assertEqual(result['trade_inflows'], 5.0)
+        self.assertEqual(result['event_inflows'], 7.0)
+        self.assertTrue(result['pnl_complete'])
+
+        # Deposits negative (cash less than known outflows) still reported, not zeroed.
+        result = net_reconciliation('2.0', [{'side': 'BUY', 'usdcSize': '10'}])
+        self.assertEqual(result['deposits'], 12.0)
+        self.assertTrue(result['pnl_complete'])
+
+        # Invalid inputs must fail loudly, never silently zero.
+        with self.assertRaisesRegex(ValueError, 'reconciliation_trades_shape'):
+            net_reconciliation('100.0', 'not-a-list')
+        with self.assertRaisesRegex(ValueError, 'reconciliation_trade_side_unknown'):
+            net_reconciliation('100.0', [{'side': 'HOLD', 'usdcSize': '5'}])
+        with self.assertRaisesRegex(ValueError, 'reconciliation_trade_amount_unknown'):
+            net_reconciliation('100.0', [{'side': 'BUY'}])
+
+    def test_activity_flows_grouping_and_validation(self):
+        rows = [
+            {'type': 'TRADE', 'side': 'BUY', 'usdcSize': '2.06'},
+            {'type': 'SPLIT', 'usdcSize': '1.0'},
+            {'type': 'MERGE', 'usdcSize': '0.5'},
+            {'type': 'REDEEM', 'usdcSize': '4.0'},
+        ]
+        flows = activity_flows(rows)
+        self.assertEqual(flows['trades'], [{'side': 'BUY', 'usdcSize': '2.06'}])
+        self.assertEqual(flows['splits'], ['1.0'])
+        self.assertEqual(flows['merges'], ['0.5'])
+        self.assertEqual(flows['redeems'], ['4.0'])
+
+        # Reconciliation on these flows: deposits = cash + out - in.
+        recon = net_reconciliation('18.23', flows['trades'], flows['splits'], flows['merges'], flows['redeems'])
+        self.assertAlmostEqual(recon['deposits'], 18.23 + 2.06 + 1.0 - 0.5 - 4.0, places=4)
+
+        # Unknown activity type must fail loudly, never be ignored.
+        with self.assertRaisesRegex(ValueError, 'reconciliation_activity_type_unknown'):
+            activity_flows([{'type': 'REWARD', 'usdcSize': '1'}])
+
+        # Unknown trade side must fail loudly.
+        with self.assertRaisesRegex(ValueError, 'reconciliation_trade_side_unknown'):
+            activity_flows([{'type': 'TRADE', 'side': 'HOLD', 'usdcSize': '1'}])
+
+        # Rows without a numeric usdcSize are skipped, not converted to zero.
+        self.assertEqual(activity_flows([{'type': 'SPLIT', 'usdcSize': None}]), {'trades': [], 'splits': [], 'merges': [], 'redeems': []})
+
+        # Non-dict rows fail loudly.
+        with self.assertRaisesRegex(ValueError, 'reconciliation_activity_shape'):
+            activity_flows(['not-a-dict'])
 
 
 class WorkflowTests(unittest.TestCase):

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
 from .budget import Budget
-from .accounting import cash_summary, positions_value
+from .accounting import activity_flows, cash_summary, net_reconciliation, positions_value
 from . import reporting
 from .collectors import Collectors
 from .evidence import relevance
@@ -469,6 +469,26 @@ class Engine:
         return self.request(url, method='GET', headers={'POLY_ADDRESS': env['POLY_SIGNER_ADDRESS'], 'POLY_API_KEY': env['POLY_API_KEY'],
                            'POLY_PASSPHRASE': env['POLY_API_PASSPHRASE'], 'POLY_TIMESTAMP': timestamp, 'POLY_SIGNATURE': signature})[0]
 
+    def activity(self):
+        """Fetch wallet activity flows with offset pagination, per type."""
+        user = self.env.get('POLY_FUNDER_ADDRESS')
+        if not user:
+            raise RuntimeError('account_read_credentials_missing')
+        rows = []
+        for kind in ('TRADE', 'SPLIT', 'MERGE', 'REDEEM'):
+            offset = 0
+            for _ in range(20):
+                page, _ = self.request(query('https://data-api.polymarket.com/activity', {'user': user, 'type': kind, 'limit': 500, 'offset': offset}))
+                if not isinstance(page, list):
+                    raise ValueError('account_activity_schema_changed')
+                rows.extend(page)
+                if len(page) < 500:
+                    break
+                offset += 500
+            else:
+                raise ValueError('account_activity_pagination_incomplete')
+        return activity_flows(rows)
+
     def account(self):
         balance = self.account_get('/balance-allowance?asset_type=COLLATERAL&signature_type=' + self.env.get('POLY_SIGNATURE_TYPE', '3'))
         orders, trades = [], []
@@ -498,9 +518,20 @@ class Engine:
         else:
             raise ValueError('account_positions_incomplete')
         normalized = [{k: p.get(k) for k in ['title', 'outcome', 'size', 'avgPrice', 'curPrice', 'currentValue', 'cashPnl', 'realizedPnl', 'redeemable', 'asset', 'conditionId']} for p in positions]
-        return {'at': iso(), **cash_summary(balance, orders), 'positions': normalized,
-                'trades': len(trades), 'valuation': 'API indicative, pas une liquidation garantie',
-                'position_value': positions_value(positions), 'complete': True, 'pnl_complete': False}
+        result = {'at': iso(), **cash_summary(balance, orders), 'positions': normalized,
+                  'trades': len(trades), 'valuation': 'API indicative, pas une liquidation garantie',
+                  'position_value': positions_value(positions), 'complete': True, 'pnl_complete': False}
+        # Residual net reconciliation from validated wallet flows. An activity
+        # failure keeps the account read valid but the PnL explicitly unknown.
+        try:
+            flows = self.activity()
+            recon = net_reconciliation(result['cash'], flows['trades'], flows['splits'], flows['merges'], flows['redeems'])
+            result['flows'] = {**recon, 'complete': True}
+            result['pnl_complete'] = recon['deposits'] >= 0
+        except Exception as error:
+            result['flows'] = {'complete': False, 'error': type(error).__name__}
+            result['pnl_complete'] = False
+        return result
 
     def reconcile(self):
         errors = []
