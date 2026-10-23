@@ -1,4 +1,4 @@
-# Research Hub — handover, 23 October 2026 (evening)
+# Research Hub — handover, 24 October 2026
 
 This file travels with the Git repository. Rick's complete current project
 documents live in `C:/Users/Rick/Documents/CloudBot VPS`: `AGENTS.md`,
@@ -10,21 +10,24 @@ this repository note does not replace a fresh inspection of the instance.
 
 Research collection, shared evidence memory, native n8n agents, account reading,
 evaluation, and one daily Telegram report. Python 3.12, PostgreSQL 17, ARM64.
-At the last inspections on 23 October (21:04–21:05 Europe/Paris):
+At the last inspection on 24 October (00:29 Europe/Paris):
 
-- Hub 0.3.2, image `lab/research-hub:20261023.12`, healthy; a **controlled
+- Hub 0.3.2, image `lab/research-hub:20261024.1`, healthy. T06/T07 require a
+  subject in the title for dossiers, agent search and new-evidence reviews;
+  body-only matches cannot admit evidence. Israel/Israeli is normalized.
+  A **controlled
   full VPS reboot was verified** (boot 20:38 UTC: ten containers healthy,
   digest key, account read, universe cursor, shared control and ten workflows
   persisted, scheduler resumed).
 - Bot `lab/cloddsbot:rick-20261023.2-digest`, healthy; worker-only overlay.
 - n8n and external runners 2.44.6; ten project workflows active.
-- Deployed implementation baseline: **`420f295`** on this branch. Earlier
+- Deployed implementation baseline: **`2e776bf`** on this branch. Earlier
   commits today: f8cac5e + 5bc4e24 (account net reconciliation and digest
   display), 88104da (40-page pagination, bounded error diagnostics),
   d0883c1 (follow-redirects/toml patches plus justified allowlist — CI
   Security green), 85fd829 (failed AI calls settle at the reserved amount),
   cc54fb8 (subject-anchor filter on the agent's search tool),
-  21ebf2a (review-on-new-evidence), dfe930ad (docs).
+  21ebf2a (review-on-new-evidence), f3aefae (theme classifier), dfe930ad (docs).
 - New research chain: `paper`, `live_dispatch=false`, no live order adapter.
   Existing bot's `DRY_RUN=false` and USD 200 per-order ceiling are separate.
 - Real-path preparation design: isolation, twelve guardrails G1-G12 and
@@ -74,7 +77,7 @@ Hub proxy credential; it does not require a separate OpenAI account. The model
 node serves the connected orchestrator, specialist and critic. Existing shared
 limits are USD 0.60/day, USD 20/month, USD 0.05/call.
 
-At the 21:04 snapshot: 34,800 discovered markets (pagination cycle open since
+At the 00:29 snapshot: 42,800 discovered markets (pagination cycle open since
 10:22 UTC), 33 registered sources. Hub evaluation had four tracked forecasts
 and none resolved; no Hub Brier score was available. Observer history is a
 different dataset (136 tracked / 17 resolved there — do not mix the two).
@@ -99,8 +102,9 @@ and localhost tunnels. Never export raw credentials or complete container env.
 
 ## Proven behavior and compatibility traps
 
-- 27 Hub unit tests and 29 PostgreSQL tests passed on ARM64 for the deployed
-  image `.12` (with the reconciliation, budget, filtering and recheck tests);
+- 30 Hub unit tests and 31 PostgreSQL tests passed on ARM64 for the deployed
+  image `20261024.1` (including body-only false positives, title positives,
+  the Israel/Israeli variant and the dossier/tool/recheck paths);
   21 observer compatibility tests were not rerun for these changes. CI
   Research Hub, Rick edition **and Security** passed on `d0883c1` after the
   dependency patches and justified allowlist.
@@ -149,6 +153,17 @@ cost-ledger matching were delivered today (residual deposits inferred from
 validated flows; failed calls settle at the reserved amount with an explicit
 `hub_uncertain` state).
 See the complete Windows task tracker for acceptance criteria and dated progress.
+
+T06/T07 follow-up on 24 October: retrospective replay of three recent dossiers
+(13 references, zero within-dossier URL duplicates) rejects five references
+under the new title rule. This is not a new agent run or a precision score.
+Useful broad comparisons may omit the subject from the title; same-subject
+financing articles may still pass for a model-quality question. Re-measure new
+dossiers before claiming citation accuracy. Existing decisions were preserved.
+Rollback: image `lab/research-hub:rollback-t06-title-20261024` (.13), originals
+and Compose in `hub/before-t06-title-20261024/` on the host, logical dump
+`/srv/lab/backups/research-before-title-20261024.dump` (restore list verified).
+No workflow or credential change; only Hub recreated with no active execution.
 
 Read the [module README](README.md) before any maintenance. Its installation
 commands describe available tooling, not a sequence to rerun on a live instance.

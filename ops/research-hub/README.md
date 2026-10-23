@@ -1,6 +1,6 @@
 # Recherche multi-thèmes — n8n + CloddsBot
 
-**Reprise au 23 octobre 2026 :** lire [HANDOVER.md](HANDOVER.md) pour l'état
+**Reprise au 24 octobre 2026 :** lire [HANDOVER.md](HANDOVER.md) pour l'état
 déployé, la provenance, les preuves, les limites et les travaux ouverts.
 Les commandes d'installation ci-dessous décrivent les outils disponibles ;
 elles ne constituent pas une séquence à rejouer sur l'instance déjà active.
@@ -74,7 +74,11 @@ précis ; elles ne sont pas présentées comme des abstentions réussies.
 
 Le rapprochement documentaire privilégie les sujets nommés et exclut les mots
 génériques des marchés et des dates. Les termes ayant produit le rapprochement
-sont conservés dans le dossier. Il s'agit d'un filtre lexical explicite, pas
+sont conservés dans le dossier. Un sujet nommé doit figurer dans le titre ; sans
+nom propre, un terme informatif de la question suffit. Les mentions seulement
+dans le corps sont écartées, y compris pour la revue sur fait nouveau. La
+variante Israel/Israeli est explicite ; les autres variantes et les titres de
+comparatifs généralistes restent une limite de rappel. Il s'agit d'un filtre lexical explicite, pas
 d'une garantie d'équivalence sémantique ou de véracité du document.
 
 Le proxy autorise le repli entre fournisseurs du même modèle, sous les plafonds
@@ -96,10 +100,12 @@ visibles comme non confirmées. Le résultat net réel demeure incomplet.
 La nouvelle chaîne est en **paper**. Elle ne copie pas la clé de signature du
 bot et n'a pas d'adaptateur d'ordres réels. Le DRY_RUN=false du bot existant n'est
 pas modifié. Le réel autonome, les sorties et remboursements réels, le résultat
-net réel rapproché restent des travaux à terminer ; les tests simulés ne les
+net détaillé restent des travaux à terminer ; un rapprochement résiduel est
+installé (voir HANDOVER). Les tests simulés ne les
 valident pas. La revue horaire de positions simulées réutilise la thèse d'entrée
 et ne permet que maintien ou vente de l'issue détenue. Elle ne gère pas encore
-les positions réelles ni les déclenchements sur publication nouvelle.
+les positions réelles. La revue sur publication nouvelle signale les dossiers
+touchés dans le bilan, sans déclencher un ordre.
 
 Le digest neuf est désactivé sur une installation vierge. Le transfert vers le
 bilan quotidien unique de 20 h Paris s'effectue après déploiement du worker
