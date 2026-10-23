@@ -6,6 +6,16 @@ documents live in `C:/Users/Rick/Documents/CloudBot VPS`: `AGENTS.md`,
 `docs/SUIVI-AVANCEMENT.md`. Those files contain dated operational evidence;
 this repository note does not replace a fresh inspection of the instance.
 
+Current security follow-up (24 October): Security failed on c914171 because
+body-parser and Zod advisories were updated on 23 October. Draft commit
+9b7cc84 patches body-parser 1.x to 1.20.9 and Drift's Zod 4 to 4.6.7 with two
+offline compatibility tests. Direct/bidi Zod 3 still needs migration; no new
+allowlist entry. Do not describe the current Security check as green. These
+JavaScript changes are not deployed on the bot; the Python Hub remains healthy.
+Final normal npm ci and the two targeted tests passed on ARM64. Production
+audit after the patches: 17 findings, one high (Zod 3), no critical finding;
+Security run 40035117892 confirms the remaining Zod paths.
+
 ## Scope and deployment snapshot
 
 Research collection, shared evidence memory, native n8n agents, account reading,
