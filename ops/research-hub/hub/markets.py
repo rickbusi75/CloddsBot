@@ -4,15 +4,15 @@ import re
 from .common import now, number, stamp
 
 THEMES = {
-    'sports': r'\b(nba|nfl|nhl|mlb|soccer|football|cricket|tennis|premier league|champions league|fifa|world cup|super bowl|vs\.?|playoffs|touchdown)\b',
-    'weather': r'\b(temperature|hottest|coldest|fahrenheit|celsius|snowfall|rainfall|weather|°[fc])\b',
-    'crypto': r'\b(bitcoin|btc|ethereum|eth|solana|crypto|defi|stablecoin|token|xrp)\b',
-    'disasters': r'\b(earthquake|hurricane|wildfire|volcano|tsunami|cyclone|flood)\b',
-    'economics': r'\b(inflation|cpi|pce|gdp|fomc|federal reserve|fed rate|interest rate|unemployment|recession|oil price|brent)\b',
-    'geopolitics': r'\b(ceasefire|invasion|airstrike|war|nato|nuclear|peace deal|military|missile|conflict)\b',
-    'politics': r'\b(election|senate|president|democrat|republican|congress|governor|minister|parliament|bill|legislation)\b',
-    'science': r'\b(launch|spacex|nasa|rocket|fda|clinical|vaccine|artificial intelligence|agi|openai|anthropic)\b',
-    'business': r'\b(earnings|revenue|ipo|merger|acquisition|tesla|nvidia|apple|microsoft|stock|market cap)\b'
+    'sports': r'\b(nba|nfl|nhl|mlb|soccer|football|cricket|tennis|premier league|champions league|fifa|world cup|super bowl|vs\.?|playoffs|touchdown|bundesliga|liga mx|s[ée]rie a|nwsl|uefa|concacaf|olympics|olympiad|grand slam|trophy|medal|clean sheets?|goal differential|runner.up|championship|playoff|penalty|wicket|mma|ufc|boxing|formula 1|f1|nascar|golf|pga|esports|season record|points table|relegation|promotion|botola|liga)\b',
+    'weather': r'\b(temperature|hottest|coldest|fahrenheit|celsius|snowfall|rainfall|weather|°[fc]|hurricane season|heatwave)\b',
+    'crypto': r'\b(bitcoin|btc|ethereum|eth|solana|crypto|defi|stablecoin|token|xrp|usdc|usdt|binance|coinbase|onchain|blockchain|nft|mining rig)\b',
+    'disasters': r'\b(earthquake|hurricane|wildfire|volcano|tsunami|cyclone|flood|typhoon|drought|landslide)\b',
+    'economics': r'\b(inflation|cpi|pce|gdp|fomc|federal reserve|fed rate|federal funds|interest rate|target rate|unemployment|recession|oil price|brent|mortgage|tariff|trade deficit|budget deficit|depeg|treasury yield)\b',
+    'geopolitics': r'\b(ceasefire|invasion|airstrike|war|nato|nuclear|peace deal|military|missile|conflict|sanctions|annex|occupy)\b',
+    'politics': r'\b(election|senate|president|presidential|democrat|democratic|republican|congress|congressional|governor|minister|parliament|cabinet|vice.president|mayor|referendum|impeach|pardon|veto|treasury secretary|prime minister|chancellor|legislation)\b',
+    'science': r'\b(launch|spacex|nasa|rocket|fda|clinical|vaccine|artificial intelligence|agi|openai|anthropic|nobel|climate model|fusion|particle)\b',
+    'business': r'\b(earnings|revenue|ipo|merger|acquisition|tesla|nvidia|apple|microsoft|stock|market cap|layoff|bankrupt|subsidiary|valuation)\b'
 }
 
 

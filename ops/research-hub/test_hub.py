@@ -30,6 +30,23 @@ class MarketTests(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertEqual(theme_of(question), expected)
 
+    def test_theme_patterns_cover_measured_residual_cases(self):
+        # Cases measured in the residual audit of 23 October: sport leagues and
+        # political inflections the first patterns missed.
+        examples = [('sports', 'Will Palmeiras win Brazil Série A?'),
+                    ('sports', 'Will Austria Wien win the 2026-27 Austrian Bundesliga?'),
+                    ('sports', 'Will Armenia win the UEFA EURO 2028?'),
+                    ('sports', 'Will KACM Marrakech keep the most clean sheets in the 2026-27 Morocco Botola Pro?'),
+                    ('politics', 'Will the Democratic Party win the OH-09 House seat?'),
+                    ('politics', 'Will Sean Duffy be the next to leave the Trump Cabinet before 2027?'),
+                    ('politics', 'Will Kim Kardashian be the 2028 Democratic Vice-Presidential nominee?'),
+                    ('economics', 'Will the upper bound of the target federal funds rate be 4.0% at the end of 2026?'),
+                    ('economics', 'Will the U.S. 30-year Fixed-Rate Mortgage hit 6.50% by December 31, 2026?'),
+                    ('crypto', 'USDC depeg by December 31?')]
+        for expected, question in examples:
+            with self.subTest(question=question):
+                self.assertEqual(theme_of(question), expected)
+
     def test_devig_removes_margin(self):
         p = devig([{'name': 'home', 'price': 1.8}, {'name': 'away', 'price': 1.8}])
         self.assertEqual(p, {'home': .5, 'away': .5})
