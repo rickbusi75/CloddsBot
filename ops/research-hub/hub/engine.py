@@ -333,7 +333,8 @@ class Engine:
                 except RuntimeError as provider_error:
                     if str(provider_error) == 'model_provider_rate_limited':
                         code = str(provider_error)
-            diagnostic = {'validation': code, 'output_excerpt': str(raw)[:5000] if isinstance(raw, str) else None}
+            diagnostic = {'validation': code, 'output_excerpt': str(raw)[:5000] if isinstance(raw, str) else None,
+                          'error_message': str(error)[:300]}
             self.store.execute("UPDATE research SET status='error',finished_at=now(),error=%s,result=%s WHERE id=%s", (code, Jsonb(diagnostic), run_id))
             raise
         finally:

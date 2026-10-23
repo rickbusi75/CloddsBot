@@ -53,7 +53,10 @@ class Collectors:
         self.env = env if env is not None else os.environ
         self.request = transport
 
-    def universe(self, max_pages=12):
+    def universe(self, max_pages=40):
+        # 40 pages x 100 marchés par passage de 30 minutes : un cycle complet
+        # couvre l'univers actif en quelques heures au lieu de plus d'un jour ;
+        # le débit Gamma reste négligeable (~1,3 requête/minute en moyenne).
         progress = self.store.get('universe_progress', {'cursor': None, 'count': 0, 'cycle': iso()})
         if progress.get('protocols') != ['v1', 'v2']:
             progress = {'cursor': None, 'count': 0, 'cycle': iso(), 'protocols': ['v1', 'v2']}
