@@ -304,6 +304,20 @@ class IntegrationTests(unittest.TestCase):
                            (Jsonb({**account, 'flows': {'complete': False, 'error': 'UpstreamError'}}),))
         self.assertIn('encore incomplet', self.engine.report())
 
+    def test_recheck_flags_dossier_on_fresher_matching_publication(self):
+        run = self.claim()
+        self.engine.complete(run['run_id'], self.decision())
+        # Evidence observed before the decision is not fait nouveau.
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 0)
+        # The same publication observed after the decision becomes fait nouveau.
+        self.store.execute("UPDATE evidence SET observed_at=now() WHERE id=%s", (self.evidence,))
+        result = self.engine.recheck()
+        self.assertEqual(result['newly_flagged'], 1)
+        flagged = self.engine.store.get('recheck_flagged')
+        self.assertEqual(flagged[0]['research_id'], run['run_id'])
+        # Idempotent: already-notified dossiers are not re-flagged.
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 0)
+
     def test_digest_owner_and_dst_deduplicate_across_restart(self):
         self.prepare_digest()
         instant = dt.datetime.fromisoformat('2026-10-25T19:05:00+00:00')

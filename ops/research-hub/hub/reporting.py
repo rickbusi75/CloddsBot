@@ -72,6 +72,12 @@ def build(engine):
         lines += [f"Brier n8n : {scores['brier']:.4f} ; référence marché {scores['baseline']:.4f} ({scores['n']} prévisions / {scores['markets']} marchés)"]
     counts = engine.store.rows("SELECT theme,count(*) n FROM research WHERE created_at>=%s AND status='complete' GROUP BY theme ORDER BY n DESC", (start,))
     lines += ['', 'Recherche du jour : ' + (', '.join(f"{THEMES.get(x['theme'],x['theme'])} {x['n']}" for x in counts) or 'aucune analyse terminée')]
+    flagged = engine.store.get('recheck_flagged') or []
+    if flagged:
+        lines += ['Nouvelles publications à relire (fait nouveau) :']
+        for item in flagged[:3]:
+            lines += ['• ' + str(item.get('question', item.get('research_id', '')))[:90]
+                      + ' — termes : ' + ', '.join(item.get('matched_terms', [])[:4])]
     latest = engine.store.rows("SELECT m.question,r.result FROM research r JOIN markets m ON m.id=r.market_id WHERE r.status='complete' AND r.finished_at>=%s ORDER BY r.finished_at DESC LIMIT 2", (start,))
     for row in latest:
         lines += ['• ' + row['question'][:100] + ' : ' + row['result']['action'], 'Motif de l’agent : ' + str(row['result'].get('reason', ''))[:360]]

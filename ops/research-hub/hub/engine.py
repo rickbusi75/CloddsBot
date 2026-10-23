@@ -95,10 +95,10 @@ class Engine:
         actions = {'universe': self.collectors.universe, 'collect': self.collectors.collect,
                    'scan': self.quantitative_scan, 'reconcile': self.reconcile,
                    'resolve': self.resolve, 'digest': self.daily_digest,
-                   'health': self.monitor, 'registry': self.registry_review}
+                   'health': self.monitor, 'registry': self.registry_review, 'recheck': self.recheck}
         if kind not in actions:
             raise ValueError('unknown_job')
-        if self.paused() and kind not in ('health', 'digest', 'reconcile', 'resolve', 'registry'):
+        if self.paused() and kind not in ('health', 'digest', 'reconcile', 'resolve', 'registry', 'recheck'):
             return {'status': 'paused'}
         with self.store.job(kind) as result:
             if result is None:
@@ -583,11 +583,47 @@ class Engine:
     def daily_digest(self):
         return reporting.scheduled(self)
 
+    def recheck(self):
+        """R14/T07 — flag dossiers whose decision may be affected by a newer
+        publication: evidence observed after the decision time that matches the
+        market question with the subject-anchor filter. A score >= 2 means the
+        named subject or a key term appears in the title; body-only matches
+        stay below the bar to keep the review list actionable."""
+        rows = self.store.rows("""SELECT r.id, r.market_id, r.finished_at, m.question, m.theme
+            FROM research r JOIN markets m ON m.id=r.market_id
+            WHERE r.status='complete' AND r.finished_at>now()-interval '3 days'
+              AND r.result->>'action' IN ('BUY','SELL')
+            ORDER BY r.finished_at DESC LIMIT 40""")
+        done = self.store.get('recheck_notified', [])
+        flagged = []
+        for row in rows:
+            if row['id'] in done:
+                continue
+            fresh = self.store.rows("SELECT id,url,title,data FROM evidence WHERE theme=%s AND observed_at>%s ORDER BY observed_at DESC LIMIT 50", (row['theme'], row['finished_at']))
+            for ev in fresh:
+                match = relevance(row['question'], ev['title'], (ev['data'] or {}).get('text', ''))
+                if match['score'] >= 2 and match['matched_terms']:
+                    flagged.append({'research_id': row['id'], 'market_id': row['market_id'],
+                                    'evidence_id': ev['id'], 'url': ev['url'],
+                                    'question': str(row['question'])[:100],
+                                    'matched_terms': match['matched_terms'], 'at': iso()})
+                    break
+        if flagged:
+            self.store.put('recheck_notified', (done + [x['research_id'] for x in flagged])[-200:])
+            self.store.put('recheck_flagged', flagged)
+        return {'dossiers_checked': len(rows), 'newly_flagged': len(flagged)}
+
     def monitor(self):
         stale = self.store.rows("SELECT id,status FROM sources WHERE status='error' OR (last_success<now()-interval '2 days' AND status='ok')")
         expired = self.store.execute("UPDATE research SET status='expired',finished_at=now(),error='agent_timeout' WHERE status='running' AND created_at<now()-interval '25 minutes'")
         uncertain = self.store.execute("UPDATE notifications SET status='uncertain',error='sender_interrupted' WHERE status='sending' AND attempted_at<now()-interval '15 minutes'")
-        return {'source_issues': stale, 'expired_research': expired, 'uncertain_notifications': uncertain, 'at': iso()}
+        recheck = None
+        # The health workflow runs every 5 minutes; the lease keeps the
+        # review-on-new-evidence scan at roughly one pass every 30 minutes.
+        if self.store.lease('recheck', 1740):
+            recheck = self.recheck()
+        return {'source_issues': stale, 'expired_research': expired, 'uncertain_notifications': uncertain,
+                'recheck': recheck, 'at': iso()}
 
     def registry_review(self):
         return {'sources': len(self.registry), 'configuration_required': [x['id'] for x in self.registry if x.get('key') and not self.env.get(x['key'])],
