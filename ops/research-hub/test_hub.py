@@ -124,7 +124,7 @@ class BudgetTests(unittest.TestCase):
 class WorkflowTests(unittest.TestCase):
     def test_native_agents_and_connections(self):
         workflows = generate({'id': 'http-test', 'name': 'HTTP'}, {'id': 'model-test', 'name': 'Model'}, 'test/model')
-        self.assertEqual(len(workflows), 9)
+        self.assertEqual(len(workflows), 10)
         agent = next(w for w in workflows if any(n['type'].endswith('.agent') for n in w['nodes']))
         self.assertEqual(sum(n['type'].endswith('.agentTool') for n in agent['nodes']), 2)
         for workflow in workflows:

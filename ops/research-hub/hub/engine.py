@@ -109,7 +109,9 @@ class Engine:
         self.store.put('candidates', {'at': iso(), 'counts': counts, 'items': eligible[:1000]})
         return {'coverage': len(rows), 'counts': counts, 'themes': sorted({x['theme'] for x in eligible})}
 
-    def claim(self):
+    def claim(self, purpose='scan'):
+        if purpose not in ('scan', 'positions'):
+            raise ValueError('unknown_research_purpose')
         if not self.settings['enabled']:
             return {'should_run': False, 'reason': 'paused'}
         owner = self.store.lease('research_cycle', 1200)
@@ -117,22 +119,36 @@ class Engine:
             return {'should_run': False, 'reason': 'agent_already_running'}
         try:
             candidates = self.store.get('candidates', {}).get('items', [])
+            if purpose == 'positions':
+                candidates = [{'market': r['market_id'], 'theme': r['theme'], 'score': 1}
+                              for r in self.store.rows('SELECT p.market_id,m.theme FROM paper_positions p JOIN markets m ON m.id=p.market_id WHERE p.closed_at IS NULL ORDER BY p.opened_at')]
             last_theme = self.store.get('last_research_theme')
             candidates = sorted(candidates, key=lambda x: (x['theme'] == last_theme, -x['score']))
             for candidate in candidates:
                 row = self.store.one('SELECT * FROM markets WHERE id=%s', (candidate['market'],))
                 if not row or eligibility(row['data'], self.settings):
                     continue
-                if row['last_researched'] and (now() - row['last_researched']).total_seconds() < 12 * 3600:
+                if purpose == 'scan' and row['last_researched'] and (now() - row['last_researched']).total_seconds() < 12 * 3600:
                     continue
+                position = None
+                if purpose == 'positions':
+                    previous = self.store.one("SELECT id FROM research WHERE market_id=%s AND context->>'purpose'='positions' AND created_at>now()-interval '1 hour'", (row['id'],))
+                    if previous:
+                        continue
+                    owned = self.store.one('SELECT p.*,r.result thesis FROM paper_positions p JOIN order_intents i ON i.id=p.intent_id JOIN research r ON r.id=i.research_id WHERE p.market_id=%s AND p.closed_at IS NULL', (row['id'],))
+                    if not owned:
+                        continue
+                    position = {k: owned[k] for k in ('id', 'outcome', 'shares', 'cost', 'fees', 'mark', 'thesis')}
                 market = row['data']
                 evidence = self.related_evidence(market)
                 run_id = uuid.uuid4().hex
                 context = {'market': market, 'evidence': evidence, 'created_at': iso(), 'lease_owner': owner,
-                           'tools_used': [], 'mode': 'paper', 'observer_reference': self.observer_reference()}
+                           'tools_used': [], 'mode': 'paper', 'purpose': purpose, 'position': position,
+                           'observer_reference': self.observer_reference()}
                 self.store.execute("INSERT INTO research(id,market_id,theme,status,context) VALUES(%s,%s,%s,'running',%s)",
                                    (run_id, market['id'], market['theme'], Jsonb(context)))
-                self.store.execute('UPDATE markets SET last_researched=now() WHERE id=%s', (market['id'],))
+                if purpose == 'scan':
+                    self.store.execute('UPDATE markets SET last_researched=now() WHERE id=%s', (market['id'],))
                 self.store.put('last_research_theme', market['theme'])
                 # Never pass the lease owner to the model.
                 safe = {k: v for k, v in context.items() if k != 'lease_owner'}
@@ -228,6 +244,10 @@ class Engine:
             outcome = result.get('outcome')
             if result.get('action') not in ('BUY', 'SELL', 'WAIT') or not isinstance(result.get('reason'), str):
                 raise ValueError('invalid_decision_schema')
+            if context.get('purpose') == 'positions' and (result['action'] == 'BUY' or result.get('outcome') != context['position']['outcome']):
+                proposal = dict(result)
+                result.update(action='WAIT', proposal=proposal, validation='position_review_action_not_applicable',
+                              reason='Revue limitée à la position détenue ; aucune nouvelle entrée. ' + result['reason'])
             if probability is not None:
                 if not 0 <= probability <= 1 or outcome not in market['outcomes']:
                     raise ValueError('invalid_forecast')

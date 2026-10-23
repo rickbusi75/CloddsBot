@@ -157,6 +157,17 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result['result']['validation'], 'trade_hypothesis_incomplete')
         self.assertEqual(self.engine.paper_portfolio()['open'], 0)
 
+    def test_position_review_gets_original_thesis_and_hourly_cooldown(self):
+        run = self.claim()
+        self.engine.complete(run['run_id'], self.decision())
+        review = self.engine.claim('positions')
+        self.assertTrue(review['should_run'])
+        self.assertEqual(review['context']['position']['thesis']['action'], 'BUY')
+        self.assertEqual(review['context']['purpose'], 'positions')
+        result = self.engine.complete(review['run_id'], {**self.decision(), 'action': 'WAIT'})
+        self.assertEqual(result['result']['action'], 'WAIT')
+        self.assertFalse(self.engine.claim('positions')['should_run'])
+
     def test_expired_lease_recovers_without_old_owner_unlocking_new(self):
         owner = self.store.lease('fixture', 60)
         self.store.execute("UPDATE leases SET expires_at=now()-interval '1 second' WHERE name='fixture'")

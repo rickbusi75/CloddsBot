@@ -69,7 +69,7 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/v1/jobs/'):
                 result = self.engine.run(path.removeprefix('/v1/jobs/'))
             elif path == '/v1/research/claim':
-                result = self.engine.claim()
+                result = self.engine.claim(str(data.get('purpose', 'scan')))
             elif path == '/v1/research/complete':
                 result = self.engine.complete(data['run_id'], data['result'])
             elif path == '/v1/tools':

@@ -16,8 +16,10 @@ jobs:
           POSTGRES_USER: research
           POSTGRES_PASSWORD: research_validation_only
           POSTGRES_DB: research
+          PGUSER: research
+          PGDATABASE: research
         ports: ['5432:5432']
-        options: --health-cmd 'pg_isready -U research -d research' --health-interval 5s --health-timeout 5s --health-retries 10
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: ops/research-hub

@@ -1,6 +1,6 @@
 # Recherche multi-thèmes — n8n + CloddsBot
 
-Service de collecte et mémoire PostgreSQL, workflows natifs n8n, orchestrateur
+Service de collecte et mémoire PostgreSQL, dix workflows natifs n8n, orchestrateur
 avec spécialiste et contradicteur, portefeuille simulé et lecture du compte réel.
 Le budget LLM réutilise le journal SQLite de l'observer et du chat existants.
 
@@ -24,7 +24,7 @@ docker compose up -d hub
 python3 deploy.py import
 ```
 
-`import` crée ou actualise seulement les neuf workflows identifiés dans l'état
+`import` crée ou actualise seulement les dix workflows identifiés dans l'état
 privé ; il les laisse inactifs. `activate` les actualise puis les active. Ne pas
 réimporter pendant une analyse active : la version publiée changerait en cours
 d'exécution. La suite d'intégration crée et supprime uniquement une base nommée
@@ -59,8 +59,10 @@ l'utilisation finale n'est pas qualifiée.
 La nouvelle chaîne est en **paper**. Elle ne copie pas la clé de signature du
 bot et n'a pas d'adaptateur d'ordres réels. Le DRY_RUN=false du bot existant n'est
 pas modifié. Le réel autonome, les sorties et remboursements réels, le résultat
-net réel rapproché et la revue automatique des positions restent des travaux à
-terminer ; les tests simulés ne les valident pas.
+net réel rapproché restent des travaux à terminer ; les tests simulés ne les
+valident pas. La revue horaire de positions simulées réutilise la thèse d'entrée
+et ne permet que maintien ou vente de l'issue détenue. Elle ne gère pas encore
+les positions réelles ni les déclenchements sur publication nouvelle.
 
 Le digest neuf est désactivé par défaut pour préserver les bilans existants
 9 h/20 h. Le passage au bilan consolidé unique nécessite une reprise explicite
