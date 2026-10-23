@@ -44,9 +44,16 @@ def build(engine):
                       + f" : {number(position.get('currentValue'), 0):.2f} pUSD"]
         if stale:
             lines += ['Dernier état non confirmé : lecture trop ancienne ou erreur actuelle.']
+        flows = a.get('flows') or {}
+        if flows.get('complete') and number(flows.get('deposits')) is not None:
+            net = number(a['cash'], 0) + number(a['position_value'], 0) - number(flows['deposits'], 0)
+            lines += [f"Résultat net latent : {net:+.2f} pUSD (cash {a['cash']:.2f} + positions {a['position_value']:.2f} − dépôts déduits {flows['deposits']:.2f})",
+                      'Position non liquidée ; pas un gain établi.']
+        else:
+            lines += ['Gain net réel : rapprochement des apports/retraits encore incomplet.']
     else:
         lines += ['Lecture du compte indisponible.']
-    lines += ['Gain net réel : rapprochement des frais et apports/retraits encore incomplet.', '', 'Simulations séparées']
+    lines += ['', 'Simulations séparées']
     lines += [f"n8n : valeur {p['equity']:.2f} / départ {p['capital']:.2f} ; réalisé {p['realized']:+.2f}, latent {p['unrealized']:+.2f}",
               f"n8n engagé : {p['exposure']:.2f} ; {p['open']} position(s)"]
     observer = engine.observer_reference()

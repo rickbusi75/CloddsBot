@@ -286,6 +286,24 @@ class IntegrationTests(unittest.TestCase):
         with sqlite3.connect(self.engine.env['OBSERVER_LEDGER']) as c:
             c.execute("INSERT OR REPLACE INTO kv VALUES('digestOwner','\"research-hub\"')")
 
+    def test_report_shows_reconciled_net_when_flows_complete(self):
+        account = {'at': iso(), 'cash': 18.228604, 'available_cash': 18.228604, 'reserved_buys': 0.0,
+                   'open_orders': 0, 'position_value': 1.716, 'positions': [], 'pnl_complete': True,
+                   'flows': {'complete': True, 'deposits': 20.284834, 'trade_inflows': 0.0,
+                             'trade_outflows': 2.05623, 'event_inflows': 0.0, 'event_outflows': 0.0,
+                             'method': 'residual_from_validated_flows'}}
+        self.store.execute('INSERT INTO account_snapshots(data) VALUES(%s)', (Jsonb(account),))
+        text = self.engine.report()
+        self.assertIn('Résultat net latent : -0.34 pUSD', text)
+        self.assertIn('dépôts déduits 20.28', text)
+        self.assertNotIn('encore incomplet', text)
+
+        # A flow read that is not complete keeps the explicit unknown wording.
+        self.store.execute('DELETE FROM account_snapshots')
+        self.store.execute('INSERT INTO account_snapshots(data) VALUES(%s)',
+                           (Jsonb({**account, 'flows': {'complete': False, 'error': 'UpstreamError'}}),))
+        self.assertIn('encore incomplet', self.engine.report())
+
     def test_digest_owner_and_dst_deduplicate_across_restart(self):
         self.prepare_digest()
         instant = dt.datetime.fromisoformat('2026-10-25T19:05:00+00:00')
