@@ -189,10 +189,23 @@ class Engine:
             if match['score']:
                 scored.append((match['score'], match['matched_terms'], row))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [{'id': r['id'], 'url': r['url'], 'title': r['title'], 'text': r['data'].get('text', '')[:3500],
-                 'source': r['source_id'], 'published_at': str(r['published_at']) if r['published_at'] else None,
-                 'observed_at': str(r['observed_at']), 'matched_terms': matched,
-                 'matching': 'subject_anchors_v1'} for _, matched, r in scored[:8]]
+        # The evidence id includes the text snapshot, so one communiqué refetched
+        # with different wording produces several rows with the same URL. A
+        # reprise of the same report is not an independent source: keep the
+        # highest-scoring row per URL (measured: defillama appeared 3x in one
+        # dossier, Kalshi and Polymarket 2x each).
+        seen_urls, picked = set(), []
+        for score, matched, row in scored:
+            if row['url'] in seen_urls:
+                continue
+            seen_urls.add(row['url'])
+            picked.append({'id': row['id'], 'url': row['url'], 'title': row['title'], 'text': row['data'].get('text', '')[:3500],
+                           'source': row['source_id'], 'published_at': str(row['published_at']) if row['published_at'] else None,
+                           'observed_at': str(row['observed_at']), 'matched_terms': matched,
+                           'matching': 'subject_anchors_v1'})
+            if len(picked) >= 8:
+                break
+        return picked
 
     def tool(self, run_id, name):
         row = self.store.one("SELECT * FROM research WHERE id=%s AND status='running'", (run_id,))

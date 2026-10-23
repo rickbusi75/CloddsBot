@@ -318,6 +318,16 @@ class IntegrationTests(unittest.TestCase):
         # Idempotent: already-notified dossiers are not re-flagged.
         self.assertEqual(self.engine.recheck()['newly_flagged'], 0)
 
+    def test_related_evidence_deduplicates_same_communique_url(self):
+        # The evidence id includes the text snapshot, so the same communiqué
+        # refetched with different wording yields several rows with one URL.
+        # One report is not two independent sources: the dossier must see it once.
+        self.store.evidence('brave', {'url': 'https://example.com/release', 'title': 'Inflation release',
+                                      'text': 'Version two of the same report, reworded.', 'theme': 'economics'})
+        evidence = self.engine.related_evidence(self.market)
+        urls = [x['url'] for x in evidence]
+        self.assertEqual(urls.count('https://example.com/release'), 1)
+
     def test_digest_owner_and_dst_deduplicate_across_restart(self):
         self.prepare_digest()
         instant = dt.datetime.fromisoformat('2026-10-25T19:05:00+00:00')
