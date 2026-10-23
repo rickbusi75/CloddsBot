@@ -173,7 +173,11 @@
     "toml": "^5.0.1",
     "protobufjs": "7.6.6",
     "proxy-addr": "2.0.8",
-    "follow-redirects": "^1.16.1"
+    "follow-redirects": "^1.16.1",
+    "body-parser@^1.0.0": "^1.20.9",
+    "@drift-labs/sdk": {
+      "zod": "^4.6.7"
+    }
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

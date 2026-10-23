@@ -9,6 +9,47 @@ const {join}=require('node:path');
 const {once}=require('node:events');
 const {spawnSync}=require('node:child_process');
 
+test('compressed JSON with trailing bytes cannot crash the Express parser',()=>{
+  const result=spawnSync(process.execPath,['-e',`
+    const assert=require('node:assert/strict');
+    const http=require('node:http');
+    const {gzipSync}=require('node:zlib');
+    const express=require('express');
+    const app=express();
+    app.use(express.json());
+    app.post('/',(req,res)=>res.json({ok:true}));
+    app.use((err,req,res,next)=>res.status(400).end());
+    const server=app.listen(0,'127.0.0.1',async()=>{
+      const request=(body,compressed)=>new Promise((resolve,reject)=>{
+        const req=http.request({host:'127.0.0.1',port:server.address().port,
+          path:'/',method:'POST',headers:{'Content-Type':'application/json',
+          'Content-Length':body.length,...(compressed?{'Content-Encoding':'gzip'}:{})}},res=>{
+            res.resume();res.on('end',()=>resolve(res.statusCode));
+          });
+        req.on('error',reject);req.end(body);
+      });
+      try{
+        await request(Buffer.concat([gzipSync(Buffer.from('{"test":true}')),Buffer.from('junk')]),true);
+        await new Promise(resolve=>setTimeout(resolve,50));
+        assert.equal(await request(Buffer.from('{"test":true}'),false),200);
+      }catch(err){console.error(err);process.exitCode=1;}
+      finally{server.close();}
+    });
+  `],{timeout:5000,encoding:'utf8'});
+  assert.equal(result.error,undefined);
+  assert.equal(result.status,0,result.stderr);
+});
+
+test('Drift Zod 4 rejects oversized constrained arrays before walking elements',()=>{
+  const {createRequire}=require('node:module');
+  const fromDrift=createRequire(require.resolve('@drift-labs/sdk'));
+  const {z}=fromDrift('zod');
+  const result=z.array(z.string()).max(2).safeParse(Array(1000).fill(0));
+  assert.equal(result.success,false);
+  assert.equal(result.error.issues.length,1);
+  assert.equal(result.error.issues[0].code,'too_big');
+});
+
 test('literal skill directories still report add, change and unlink after the watcher upgrade',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'clodds-watch-security-'));
   const watcher=require('chokidar').watch(dir,{ignoreInitial:true,
