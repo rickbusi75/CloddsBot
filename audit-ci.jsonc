@@ -15,16 +15,31 @@
   "allowlist": [
     // uuid — v3/v5/v6 buffer-bounds check (the v4 generator is unaffected). Verified
     // node-cron's own source only calls uuid.v4() (scheduled-task.js, storage.js).
-    // The other path, @wormhole-foundation/sdk-solana's pinned rpc-websockets, has no
-    // direct `uuid` reference in its own source at all — likely unused/indirect — but
-    // that's not fully confirmed, so treat this allowlist entry as provisional pending
-    // a closer look, not as verified-safe the way node-cron's path is.
+    // Also verified on 23 Oct 2026: the published rpc-websockets@7.11.2 tarball
+    // (pinned by @wormhole-foundation/sdk-solana) contains NO uuid call in its
+    // shipped code — the dependency is declared but unused — so the vulnerable
+    // v3/v5/v6 path is unreachable there too. The rpc-websockets@9.3.9 top-level
+    // copy resolves uuid@14.0.2, which is outside the vulnerable range entirely.
     "GHSA-w5hq-g745-h8pq",
 
-    // stream-json — quadratic behavior is confined to the pick/ignore/filter/replace
-    // helpers. The only production consumer is jayson, which imports StreamValues and
-    // Verifier instead. jayson 4.3 pins stream-json 1.x and is incompatible with the
-    // patched 3.x module paths, so forcing the major would break Solana RPC parsing.
-    "GHSA-528h-pc64-c93x"
+    // stream-json — the only production consumer is jayson 4.3, which pins
+    // stream-json 1.x and imports StreamValues and Verifier instead of the
+    // pick/ignore/filter/replace helpers. jayson 4.3 is incompatible with the
+    // patched 3.x module paths, so forcing the major would break Solana RPC
+    // parsing. jayson 5.x (stream-json 3.x compatible) is the future fix path;
+    // these entries come out when that upgrade is validated.
+    //
+    // - GHSA-528h-pc64-c93x: quadratic DoS confined to unused helper filters.
+    // - GHSA-hqr4-qq8f-hg3x: JSONC comment re-scan is also confined to the
+    //   JSONC parsing path; jayson consumes plain JSON responses via
+    //   StreamValues/Verifier, and a compromised or malicious Solana RPC
+    //   endpoint is a trusted-configuration risk (our own configured URL),
+    //   not attacker-controlled input.
+    // - GHSA-mjw6-4jj6-33hc: Assembler prototype pollution writes on plain
+    //   objects during parse; input is the response of our configured RPC
+    //   endpoint, same trust boundary as above.
+    "GHSA-528h-pc64-c93x",
+    "GHSA-hqr4-qq8f-hg3x",
+    "GHSA-mjw6-4jj6-33hc"
   ]
 }
