@@ -17,7 +17,7 @@ services:
     security_opt: [no-new-privileges:true]
   hub:
     build: .
-    image: lab/research-hub:20261023.4
+    image: lab/research-hub:20261023.5
     container_name: research-hub
     restart: unless-stopped
     env_file: /srv/lab/config/research-hub/hub.env

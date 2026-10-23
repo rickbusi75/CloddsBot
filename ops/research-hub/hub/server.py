@@ -39,7 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/health':
                 self.engine.store.one('SELECT 1')
-                return self.respond(200, {'status': 'healthy', 'version': '0.3.1', 'mode': 'paper'})
+                return self.respond(200, {'status': 'healthy', 'version': '0.3.2', 'mode': 'paper'})
             if path in ('/', '/app.js', '/style.css'):
                 name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}[path]
                 mime = {'/': 'text/html; charset=utf-8', '/app.js': 'text/javascript; charset=utf-8', '/style.css': 'text/css; charset=utf-8'}[path]

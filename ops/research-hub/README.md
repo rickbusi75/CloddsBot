@@ -17,9 +17,9 @@ Sur l'hôte ARM64, en root, depuis ce dossier installé sous
 ```sh
 python3 deploy.py initialize
 docker compose build hub
-docker run --rm --network none lab/research-hub:20261023.4 python -m unittest -v test_hub
+docker run --rm --network none lab/research-hub:20261023.5 python -m unittest -v test_hub
 docker compose up -d db
-docker run --rm --network research-hub_storage --env-file /srv/lab/config/research-hub/hub.env lab/research-hub:20261023.4 python -m unittest -v test_integration
+docker run --rm --network research-hub_storage --env-file /srv/lab/config/research-hub/hub.env lab/research-hub:20261023.5 python -m unittest -v test_integration
 docker compose up -d hub
 python3 deploy.py import
 ```

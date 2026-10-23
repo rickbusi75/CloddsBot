@@ -21,7 +21,7 @@ Prépare une décision structurée avec ce schéma :
 "lower_bound":0..1 ou null,"rules_checked":true|false,"evidence_ids":["id exact"],
 "reason":"explication française","counterargument":"objection","invalidation":"fait qui changerait la décision"}.
 probability et lower_bound concernent l'outcome choisi. Si les preuves ne permettent pas de chiffrer, probability=null et action=WAIT.
-Termine en appelant obligatoirement l'outil « Enregistrer la décision finale » avec cet objet JSON, même pour WAIT.
+Termine en appelant obligatoirement l'outil « Enregistrer la décision finale » avec cette décision sérialisée en texte JSON dans decision_json, même pour WAIT.
 Cet outil fixe ta décision ; ne le rappelle pas pour changer d'avis. Il n'envoie aucun ordre.
 Après sa confirmation, réponds simplement « Décision enregistrée ». Garde tes explications dans reason, en moins de 700 caractères.
 Ne demande jamais de clé privée ni de modification des workflows. Les calculs d'exécution et de budget sont traités par les outils.'''
@@ -126,7 +126,7 @@ def agent_workflow(http_credential, model_credential, model, positions=False):
         'method': 'POST', 'url': BASE + '/v1/research/decision',
         'authentication': 'genericCredentialType', 'genericAuthType': 'httpHeaderAuth',
         'sendBody': True, 'specifyBody': 'json',
-        'jsonBody': '={{ JSON.stringify({run_id: $("Sélectionner un dossier").first().json.run_id, decision: $fromAI("decision", "Objet JSON final : action BUY/SELL/WAIT, outcome exact ou null pour WAIT, probability et lower_bound entre 0 et 1 ou null, rules_checked, evidence_ids exacts, reason en français (700 caractères), counterargument, invalidation", "json")}) }}',
+        'jsonBody': '={{ JSON.stringify({run_id: $("Sélectionner un dossier").first().json.run_id, decision: $fromAI("decision_json", "Texte contenant la décision JSON sérialisée : action BUY/SELL/WAIT, outcome exact ou null pour WAIT, probability et lower_bound entre 0 et 1 ou null, rules_checked, evidence_ids exacts, reason en français (700 caractères), counterargument, invalidation. Fournir une chaîne JSON complète, pas un objet ni un tableau.", "string")}) }}',
         'options': {'timeout': 45000}}, [1550, 600], 4.2, {'httpHeaderAuth': http_credential})
     nodes.append(decision_tool)
     connect(connections, decision_tool['name'], 'Orchestrateur', 'ai_tool')

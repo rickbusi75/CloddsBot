@@ -199,6 +199,7 @@ class WorkflowTests(unittest.TestCase):
         targets = agent['connections'][decision['name']]['ai_tool'][0]
         self.assertEqual([t['node'] for t in targets], ['Orchestrateur'])
         self.assertIn('$fromAI', decision['parameters']['jsonBody'])
+        self.assertIn('"decision_json"', decision['parameters']['jsonBody'])
         for workflow in workflows:
             names = {n['name'] for n in workflow['nodes']}
             for source, groups in workflow['connections'].items():

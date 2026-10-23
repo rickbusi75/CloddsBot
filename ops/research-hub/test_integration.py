@@ -160,7 +160,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_staged_decision_survives_truncated_final_prose_without_early_fill(self):
         run = self.claim()
-        staged = self.engine.stage_decision(run['run_id'], self.decision())
+        staged = self.engine.stage_decision(run['run_id'], json.dumps(self.decision()))
         self.assertEqual(staged['execution'], 'not_submitted')
         self.assertEqual(self.engine.paper_portfolio()['open'], 0)
         self.assertEqual(self.store.one('SELECT count(*) n FROM forecasts')['n'], 0)
