@@ -207,6 +207,13 @@ class Engine:
             return cached
         if name == 'search_evidence':
             value = self.collectors.search(market['question'], market['theme'])
+            # Search results are generic word matches; apply the same
+            # subject-anchor filter as related_evidence so an agent tool call
+            # cannot bypass the dossier filter. Measured on 23 Oct: off-topic
+            # evidence (US midterms, Israeli elections) reached a Russian
+            # presidency dossier through this unfiltered path.
+            value = [item for item in value
+                     if relevance(market['question'], item.get('title', ''), item.get('text', ''))['score']]
         elif name == 'specialist_data':
             value = self.collectors.specialized(market)
         elif name == 'compare_forecasts':

@@ -350,6 +350,20 @@ class IntegrationTests(unittest.TestCase):
             result = self.engine.collectors.collect(force=True)
         self.assertEqual(result['gdelt']['deferred'], 'provider_rate_limit')
 
+    def test_search_evidence_tool_applies_subject_filter(self):
+        run = self.claim()
+        self.engine.env.update(SEARXNG_URL='http://searxng:8080')
+        def search(url, **kwargs):
+            if 'searxng:8080' in url:
+                return {'results': [
+                    {'url': 'https://example.com/on-topic', 'title': 'Inflation jumps above target', 'content': 'Consumer prices rose above the 3% threshold.'},
+                    {'url': 'https://example.com/off-topic', 'title': 'Election calculator for the Senate', 'content': 'Who will control the Senate after the midterms?'},
+                ]}, {}
+            return '<html></html>', {}
+        self.engine.collectors.request = search
+        value = self.engine.tool(run['run_id'], 'search_evidence')
+        self.assertEqual([x['url'] for x in value], ['https://example.com/on-topic'])
+
     def test_brave_failure_falls_back_with_correct_provenance(self):
         self.engine.env.update(BRAVE_SEARCH_API_KEY='test', SEARXNG_URL='http://searxng:8080')
         def search(url, **kwargs):
