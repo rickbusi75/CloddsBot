@@ -103,8 +103,8 @@ const metaculus: FeedDescriptor = {
   ],
   dataTypes: ['markets', 'probabilities', 'forecasts'],
   connectionType: 'polling',
-  requiredEnv: [],
-  optionalEnv: ['METACULUS_API_KEY'],
+  requiredEnv: ['METACULUS_TOKEN'],
+  optionalEnv: [],
   configKey: 'metaculus',
   docsUrl: 'https://www.metaculus.com/api',
   create: async (config) => {
