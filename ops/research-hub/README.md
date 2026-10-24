@@ -107,6 +107,13 @@ et ne permet que maintien ou vente de l'issue détenue. Elle ne gère pas encore
 les positions réelles. La revue sur publication nouvelle signale les dossiers
 touchés dans le bilan, sans déclencher un ordre.
 
+T13 S1a : l'[exécuteur dédié en ombre](shadow_executor/README.md) est installé
+avec plafonds 2/4/6 pUSD après délégation de Rick. Il ne possède aucune clé
+ni fonction d'envoi ; `live_dispatch=true` est refusé. Son statut apparaît dans
+l'interface et le bilan. Les tests unitaires incluent maintenant
+`python -m unittest -v test_hub test_shadow_executor` ; les tests PostgreSQL
+restent dans la base de validation isolée existante.
+
 Le digest neuf est désactivé sur une installation vierge. Le transfert vers le
 bilan quotidien unique de 20 h Paris s'effectue après déploiement du worker
 compatible :

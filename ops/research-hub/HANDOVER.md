@@ -6,6 +6,18 @@ documents live in `C:/Users/Rick/Documents/CloudBot VPS`: `AGENTS.md`,
 `docs/SUIVI-AVANCEMENT.md`. Those files contain dated operational evidence;
 this repository note does not replace a fresh inspection of the instance.
 
+Latest T13 state, 24 October 02:48 Europe/Paris: Rick delegated architecture
+and caps with "AU MIEUIX". Dedicated option A selected: 2 pUSD/proposal including
+fee reserve, 4/day Paris, 6 total exposure including real positions and shadow
+reserves. Hub image 20261024.2 and research-executor 20261024.1 healthy. Runtime
+75c08df, executor image fix 1c86314; 42 unit + 35 PostgreSQL ARM64 tests passed.
+S1a only: no signing credentials, submission/cancellation adapter, or live mode.
+Do not ask Rick to choose A/B or those caps again. See shadow_executor/README.md.
+Restricted PostgreSQL role, immutable shadow intent journal and shared pause;
+restore verified with 62,800 markets, two state rows and zero intents at that
+snapshot. Existing bot/VPN/n8n unchanged. SELL, signing, live reconciliation,
+redemption and citation precision remain open; shadow reserves are hypothetical.
+
 Current security follow-up (24 October): Security failed on c914171 because
 body-parser and Zod advisories were updated on 23 October. Draft commit
 9b7cc84 patches body-parser 1.x to 1.20.9 and Drift's Zod 4 to 4.6.7 with two
@@ -20,7 +32,7 @@ Security run 40035117892 confirms the remaining Zod paths.
 
 Research collection, shared evidence memory, native n8n agents, account reading,
 evaluation, and one daily Telegram report. Python 3.12, PostgreSQL 17, ARM64.
-At the last inspection on 24 October (00:29 Europe/Paris):
+Earlier inspection snapshot on 24 October (00:29 Europe/Paris; superseded by T13 above):
 
 - Hub 0.3.2, image `lab/research-hub:20261024.1`, healthy. T06/T07 require a
   subject in the title for dossiers, agent search and new-evidence reviews;
@@ -41,8 +53,8 @@ At the last inspection on 24 October (00:29 Europe/Paris):
 - New research chain: `paper`, `live_dispatch=false`, no live order adapter.
   Existing bot's `DRY_RUN=false` and USD 200 per-order ceiling are separate.
 - Real-path preparation design: isolation, twelve guardrails G1-G12 and
-  staged validation S0-S4 documented in Rick's tracker (T13); awaiting
-  Rick's architecture and cap decisions. Nothing executes real orders.
+  staged validation S0-S4 documented in Rick's tracker (T13); S0 delegated and
+  S1a installed as described above. Nothing executes real orders.
 - Account reads now include a **residual net reconciliation** from validated
   wallet flows (deposits inferred, `pnl_complete`), displayed in the daily
   digest with an explicit non-profit caveat.
@@ -157,7 +169,7 @@ before that reboot.
 Open items: second-day report observation (24 October 20:00 Paris), pagination
 cycle completion and residual-category measurement, citation re-measurement
 under the URL dedup, forecast evaluation after resolutions, real-path stages
-S1-S4 after Rick's architecture decision, and the seven optional source keys
+after the S1a observation foundation, and the seven optional source keys
 (Rick's configurations). The account net reconciliation and the conservative
 cost-ledger matching were delivered today (residual deposits inferred from
 validated flows; failed calls settle at the reserved amount with an explicit
