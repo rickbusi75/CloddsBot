@@ -6,6 +6,21 @@ documents live in `C:/Users/Rick/Documents/CloudBot VPS`: `AGENTS.md`,
 `docs/SUIVI-AVANCEMENT.md`. Those files contain dated operational evidence;
 this repository note does not replace a fresh inspection of the instance.
 
+Latest Hub check, 24 October 03:11 Europe/Paris: image 20261024.3 healthy,
+code ce06df9. Electoral questions naming a full US state require that state in
+the headline. Weak party/name fragments cannot replace a distinctive subject.
+Staging and completion revalidate cited references, including old context/tool
+caches, before forecasts or paper fills. Marker subject_anchors_v3_scope.
+46 unit + 38 PostgreSQL tests passed on ARM64. Read-only replay: 18 dossiers,
+74 references, 41 accepted by v2 vs 32 by v3 (nine additional exclusions).
+This is not entailment validation or a fresh agent sample. Districts, homonyms,
+other locations and recall remain open. Dedicated executor unchanged, healthy,
+no candidates/blocked intents at that check. One scan from 23 October 20:35 UTC
+remains marked running with no active n8n execution: track interrupted-job state
+recovery (T14), retain the evidence. 66,800 markets, five forecasts/none resolved.
+Backup research-before-scope-20261024.dump and rollback-before-scope-20261024
+retained. No PR-triggered GitHub run returned for this commit at the check.
+
 Latest T13 state, 24 October 02:48 Europe/Paris: Rick delegated architecture
 and caps with "AU MIEUIX". Dedicated option A selected: 2 pUSD/proposal including
 fee reserve, 4/day Paris, 6 total exposure including real positions and shadow
