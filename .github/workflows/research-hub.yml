@@ -1,0 +1,39 @@
+name: Research Hub
+on:
+  pull_request:
+    paths: ['ops/research-hub/**', 'ops/autonomy/**', '.github/workflows/research-hub.yml']
+  push:
+    paths: ['ops/research-hub/**', 'ops/autonomy/**', '.github/workflows/research-hub.yml']
+permissions:
+  contents: read
+jobs:
+  transactions-and-workflows:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: research
+          POSTGRES_PASSWORD: research_validation_only
+          POSTGRES_DB: research
+          PGUSER: research
+          PGDATABASE: research
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: ops/research-hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v test_hub test_shadow_executor test_configure
+      - run: python -m unittest -v test_worker
+        working-directory: ops/autonomy
+      - run: python -m unittest -v test_integration
+        env:
+          DATABASE_URL: postgresql://research:research_validation_only@127.0.0.1:5432/research
+      - name: Build dedicated shadow image
+        run: docker build -f Dockerfile.executor -t research-executor:validation .

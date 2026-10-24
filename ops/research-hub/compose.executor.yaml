@@ -1,0 +1,16 @@
+services:
+  executor:
+    build: {context: ., dockerfile: Dockerfile.executor}
+    image: lab/research-executor:20261024.1
+    container_name: research-executor
+    restart: unless-stopped
+    env_file: /srv/lab/config/research-executor/executor.env
+    volumes:
+      - /srv/lab/config/research-executor:/config:ro
+      - /srv/lab/data/cloddsbot/autonomy:/observer:ro
+    networks: [storage, n8n]
+    mem_limit: 128m
+    cpus: 0.25
+    read_only: true
+    tmpfs: ['/tmp:size=8m,mode=1777']
+    security_opt: [no-new-privileges:true]

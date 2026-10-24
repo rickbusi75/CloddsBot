@@ -91,6 +91,7 @@ const SKILL_MANIFEST: string[] = [
   'mm',
   'mexc-futures',
   'monitoring',
+  'n8n',
   'news',
   'onchainkit',
   'opinion',

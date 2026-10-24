@@ -489,6 +489,9 @@ export const CORE_TOOL_NAMES = new Set([
   'coingecko_price',
   'solana_address',
 
+  // Automation (1)
+  'n8n_api',
+
   // Meta (1)
   'tool_search',
 ]);

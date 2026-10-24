@@ -248,7 +248,11 @@ class Observer:
         owners = tg.get('allowFrom', [])
         if len(owners) != 1 or not str(owners[0]).isdigit() or not self.env.get('TELEGRAM_BOT_TOKEN'):
             raise RuntimeError('One explicit Telegram operator required')
-        for row in self.db.execute('SELECT * FROM outbox WHERE sent IS NULL ORDER BY rowid LIMIT 2').fetchall():
+        # digest-owner:v1 — the consolidated reporter owns scheduled summaries.
+        query = 'SELECT * FROM outbox WHERE sent IS NULL'
+        if self.get('digestOwner', 'observer') != 'observer':
+            query += " AND key NOT LIKE 'digest:%'"
+        for row in self.db.execute(query + ' ORDER BY rowid LIMIT 2').fetchall():
             self.db.execute('UPDATE outbox SET attempts=attempts+1 WHERE key=?', (row['key'],))
             self.db.commit()
             result, _ = request('https://api.telegram.org/bot' + self.env['TELEGRAM_BOT_TOKEN'] + '/sendMessage',
@@ -625,7 +629,7 @@ clear rules, a serious counterargument and a robust lowerBound. Otherwise ABSTAI
             self.db.commit()
         local = now.astimezone(PARIS)
         # Catch up within the scheduled hour only; never flood old digests after downtime.
-        if local.hour in (9, 20):
+        if self.get('digestOwner', 'observer') == 'observer' and local.hour in (9, 20):
             self.enqueue('digest:' + local.strftime('%Y-%m-%d:%H'), self.report())
         self.snapshot()
         self.deliver()

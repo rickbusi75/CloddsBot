@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:17-bookworm
+    container_name: research-db
+    restart: unless-stopped
+    env_file: /srv/lab/config/research-hub/db.env
+    volumes:
+      - /srv/lab/data/research-hub/postgres:/var/lib/postgresql/data
+    networks: [storage]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U research -d research']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    cpus: 0.50
+    security_opt: [no-new-privileges:true]
+  hub:
+    build: .
+    image: lab/research-hub:20261023.5
+    container_name: research-hub
+    restart: unless-stopped
+    env_file: /srv/lab/config/research-hub/hub.env
+    depends_on:
+      db: {condition: service_healthy}
+    volumes:
+      - /srv/lab/config/research-hub:/config:ro
+      - /srv/lab/data/cloddsbot/autonomy:/observer
+    ports: ['127.0.0.1:8766:8766']
+    networks:
+      storage: {}
+      n8n: {aliases: [research-hub]}
+    mem_limit: 512m
+    cpus: 0.75
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1777']
+    security_opt: [no-new-privileges:true]
+networks:
+  storage: {internal: true}
+  n8n: {external: true, name: n8n_default}

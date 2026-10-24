@@ -1,0 +1,41 @@
+{
+  "enabled": true,
+  "execution_mode": "paper",
+  "daily_ai_usd": 0.60,
+  "monthly_ai_usd": 20.0,
+  "max_ai_call_usd": 0.05,
+  "model": "z-ai/glm-5.3-flash",
+  "max_research_per_cycle": 2,
+  "paper_capital": 200,
+  "paper_order_usd": 5,
+  "paper_max_exposure_usd": 30,
+  "minimum_net_edge": 0.05,
+  "minimum_liquidity": 500,
+  "max_spread": 0.08,
+  "max_market_days": 120,
+  "digest_hour": 20,
+  "timezone": "Europe/Paris",
+  "digest_enabled": false,
+  "telegram_chat_id": "",
+  "odds_daily_credits": 12,
+  "odds_regions": "eu",
+  "odds_sports": ["soccer_epl", "basketball_nba"],
+  "weather_locations": {
+    "new york": [40.7789, -73.9692, "America/New_York"],
+    "chicago": [41.9786, -87.9048, "America/Chicago"],
+    "miami": [25.7959, -80.2870, "America/New_York"],
+    "london": [51.4775, -0.4614, "Europe/London"]
+  },
+  "sources": {
+    "gamma": true, "clob": true, "poly_account": true, "crypto_prices": true, "bls": true,
+    "usgs": true, "eonet": true, "gdacs": true,
+    "federal_register": true, "fed": true, "bea_rss": true,
+    "defillama": true, "gdelt": true, "odds": true,
+    "nws": true, "manifold": true, "metaculus": true,
+    "brave": true, "searxng": true,
+    "openmeteo": false, "reliefweb": false, "acled": false,
+    "ucdp": false, "eia": false, "congress": false,
+    "coingecko": false, "football_data": false,
+    "launch_library": true, "clinicaltrials": false, "openfda": false
+  }
+}
