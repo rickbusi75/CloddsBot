@@ -6,6 +6,18 @@ documents live in `C:/Users/Rick/Documents/CloudBot VPS`: `AGENTS.md`,
 `docs/SUIVI-AVANCEMENT.md`. Those files contain dated operational evidence;
 this repository note does not replace a fresh inspection of the instance.
 
+24 October 09:04 Europe/Paris: host API setup helper be72099 installed; missing
+Windows Configurer-API.ps1 now installed in Rick's master lab directory. Status
+and readiness checks passed; busy refusal observed during actual n8n execution
+814, then success after it finished. Nine isolated ARM64 helper tests passed
+as root and non-root; 46 Hub/shadow tests rerun. No real key added, no container
+restarted. Backups before writes, verbatim unrelated env lines, only-Hub recreate,
+health check and rollback are covered. Activity checks are not a scheduler-wide
+lock. Hub runtime remains ce06df9 / 20261024.3. Windows dashboard/n8n/WebChat
+respond; Telegram getMe valid; Hub 8766 remains unavailable locally. R15 is
+still incomplete. Source docs correct ReliefWeb (approved appname) and UCDP
+(request a token from the maintainer), verified against official documentation.
+
 Latest Hub check, 24 October 03:11 Europe/Paris: image 20261024.3 healthy,
 code ce06df9. Electoral questions naming a full US state require that state in
 the headline. Weak party/name fragments cannot replace a distinctive subject.

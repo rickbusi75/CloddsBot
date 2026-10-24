@@ -53,6 +53,7 @@ local ni argument de commande contenant la clé :
 
 ```powershell
 .\Configurer-API.ps1
+.\Configurer-API.ps1 -Check
 .\Configurer-API.ps1 -Api EIA_API_KEY
 ```
 
@@ -61,6 +62,14 @@ ReliefWeb appname, CoinGecko Demo et football-data. L'enregistrement ne prouve
 pas la validité externe ni les droits d'accès. Le renouvellement automatique du
 token ACLED n'est pas encore implémenté. Open-Meteo reste désactivé tant que
 l'utilisation finale n'est pas qualifiée.
+
+Windows launcher installed in Rick's `Vps oracle` directory on 24 October.
+The host helper refuses known active research/n8n jobs before prompting/writing,
+backs up both private files, preserves unrelated env lines, recreates only Hub
+with the executor overlay retained, and checks service health. Failed applies
+attempt file/service rollback and report any failed recovery separately. These
+checks are not a scheduler-wide maintenance lock. Run isolated helper tests
+with `python -m unittest -v test_configure`; no real credential is used.
 
 ## Décisions, preuves et disponibilité du modèle
 
