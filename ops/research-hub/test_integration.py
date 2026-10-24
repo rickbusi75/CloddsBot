@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+import uuid
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
@@ -22,6 +23,11 @@ from hub.common import iso, now, UpstreamError
 from hub.engine import Engine
 from hub.markets import normalize
 from hub.store import Store
+from shadow_executor.policy import config as shadow_config
+from shadow_executor.worker import SCHEMA as SHADOW_SCHEMA, LOCK as SHADOW_LOCK, run_once as shadow_pass
+from shadow_executor.admin import create_role as create_shadow_role, grant_access as grant_shadow_access
+from shadow_executor.status import summary as shadow_summary
+from psycopg.rows import dict_row
 
 
 class IntegrationTests(unittest.TestCase):
@@ -70,6 +76,95 @@ class IntegrationTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def prepare_shadow(self, rows=1):
+        self.control = Path(self.temp.name)/'control.json'
+        self.control.write_text('{"paused":false}')
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            c.execute(SHADOW_SCHEMA)
+            c.execute('TRUNCATE execution_shadow.intents,execution_shadow.state')
+            c.execute("INSERT INTO execution_shadow.state VALUES('started_at',%s)",
+                      (Jsonb((now()-dt.timedelta(minutes=1)).isoformat()),))
+            c.execute('INSERT INTO account_snapshots(data) VALUES(%s)', (Jsonb({
+                'complete': True, 'cash': 18, 'available_cash': 18, 'open_orders': 0,
+                'position_value': 0, 'positions': []}),))
+            for i in range(rows):
+                market = {**self.market, 'id': 'shadow-market-'+str(i), 'event_id': 'shadow-event-'+str(i)}
+                c.execute('INSERT INTO markets(id,event_id,theme,question,data,version) VALUES(%s,%s,%s,%s,%s,%s)',
+                          (market['id'], market['event_id'], 'economics', market['question'], Jsonb(market), 'v1'))
+                c.execute("""INSERT INTO research(id,market_id,theme,status,finished_at,context,result)
+                    VALUES(%s,%s,'economics','complete',now(),%s,%s)""",
+                          ('shadow-'+str(i), market['id'], Jsonb({'market': market}), Jsonb(self.decision())))
+        self.book['tick_size'] = '.01'
+        self.book['market'] = self.market['condition_id']
+
+    def shadow_read(self, kind, identity):
+        return self.book if kind == 'book' else {'fd': {'r': .05, 'e': 1}}
+
+    def test_shadow_persists_once_across_restart_and_cannot_dispatch(self):
+        self.prepare_shadow()
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            first = shadow_pass(c, shadow_config({}), self.control, self.shadow_read)
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            second = shadow_pass(c, shadow_config({}), self.control, self.shadow_read)
+            row = c.execute('SELECT * FROM execution_shadow.intents').fetchone()
+        self.assertEqual(first['shadow_candidates'], 1)
+        self.assertEqual(second['examined'], 0)
+        self.assertEqual(row['data']['transmitted'], 0)
+        self.assertIs(row['data']['live_eligible'], False)
+
+    def test_shadow_transaction_lock_prevents_parallel_budget_consumption(self):
+        self.prepare_shadow(rows=3)
+        with psycopg.connect(self.dsn, row_factory=dict_row) as holder:
+            holder.execute('SELECT pg_advisory_xact_lock(%s)', (SHADOW_LOCK,))
+            with psycopg.connect(self.dsn, row_factory=dict_row) as other:
+                self.assertEqual(shadow_pass(other, shadow_config({}), self.control, self.shadow_read)['status'], 'busy')
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            shadow_pass(c, shadow_config({}), self.control, self.shadow_read)
+            total = c.execute("SELECT sum(reserved_usd) n FROM execution_shadow.intents WHERE status='shadow_candidate'").fetchone()['n']
+            self.assertLessEqual(total, 4)
+
+    def test_shadow_pause_and_public_read_failure_do_not_create_candidates(self):
+        self.prepare_shadow()
+        self.control.write_text('{"paused":true}')
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            result = shadow_pass(c, shadow_config({}), self.control, self.shadow_read)
+            self.assertEqual(result['status'], 'paused')
+            self.assertEqual(c.execute('SELECT count(*) n FROM execution_shadow.intents').fetchone()['n'], 0)
+        self.control.write_text('{"paused":false}')
+        def failed(*args): raise RuntimeError('secret_must_not_appear')
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            result = shadow_pass(c, shadow_config({}), self.control, failed)
+            row = c.execute('SELECT * FROM execution_shadow.intents').fetchone()
+        self.assertEqual(result['blocked'], 1)
+        self.assertEqual(row['reason'], 'input_or_public_read_failed')
+        self.assertNotIn('secret_must_not_appear', json.dumps(row['data']))
+
+    def test_shadow_role_can_journal_but_cannot_change_hub_or_delete_intents(self):
+        self.prepare_shadow()
+        role = 'shadow_validation_'+uuid.uuid4().hex[:12]
+        with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+            create_shadow_role(c, 'isolated-test-fixture', role)
+            grant_shadow_access(c, role)
+        try:
+            with psycopg.connect(self.dsn, row_factory=dict_row) as c:
+                c.execute(sql.SQL('SET ROLE {}').format(sql.Identifier(role)))
+                result = shadow_pass(c, shadow_config({}), self.control, self.shadow_read)
+                self.assertEqual(result['shadow_candidates'], 1)
+                c.commit()
+                for statement in ['UPDATE public.research SET status=status WHERE false',
+                                  'DELETE FROM execution_shadow.intents WHERE false']:
+                    with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                        with c.transaction(): c.execute(statement)
+            status = shadow_summary(self.store)
+            self.assertTrue(status['fresh'])
+            self.assertEqual(status['candidates'], 1)
+            self.assertEqual(status['transmission_capability'], 'absent')
+            self.assertIn('Exécuteur dédié en observation', self.engine.report())
+        finally:
+            with psycopg.connect(self.dsn) as c:
+                c.execute(sql.SQL('DROP OWNED BY {}').format(sql.Identifier(role)))
+                c.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(role)))
 
     def transport(self, url, **kwargs):
         if '/book?' in url:

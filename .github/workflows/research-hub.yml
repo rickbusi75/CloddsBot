@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: python -m unittest -v test_hub
+      - run: python -m unittest -v test_hub test_shadow_executor
       - run: python -m unittest -v test_worker
         working-directory: ops/autonomy
       - run: python -m unittest -v test_integration

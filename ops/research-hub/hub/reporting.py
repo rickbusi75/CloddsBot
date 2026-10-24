@@ -5,6 +5,7 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from .common import now, number, stamp, UpstreamError
+from shadow_executor.status import summary as shadow_summary
 
 THEMES = {'sports': 'sport', 'weather': 'météo', 'crypto': 'crypto', 'disasters': 'catastrophes',
           'economics': 'économie', 'geopolitics': 'géopolitique', 'politics': 'politique',
@@ -70,6 +71,10 @@ def build(engine):
     scores = engine.store.one('SELECT count(result) n,count(DISTINCT market_id) FILTER (WHERE result IS NOT NULL) markets,avg((probability-result)^2) brier,avg((baseline-result)^2) baseline FROM forecasts')
     if scores['n']:
         lines += [f"Brier n8n : {scores['brier']:.4f} ; référence marché {scores['baseline']:.4f} ({scores['n']} prévisions / {scores['markets']} marchés)"]
+    shadow = shadow_summary(engine.store)
+    if shadow['installed']:
+        state = 'en observation' if shadow.get('fresh') else 'suivi à vérifier'
+        lines += [f"Exécuteur dédié {state} : {shadow.get('candidates', 0)} intention(s) simulée(s), aucun envoi d'ordre possible."]
     counts = engine.store.rows("SELECT theme,count(*) n FROM research WHERE created_at>=%s AND status='complete' GROUP BY theme ORDER BY n DESC", (start,))
     lines += ['', 'Recherche du jour : ' + (', '.join(f"{THEMES.get(x['theme'],x['theme'])} {x['n']}" for x in counts) or 'aucune analyse terminée')]
     flagged = engine.store.get('recheck_flagged') or []

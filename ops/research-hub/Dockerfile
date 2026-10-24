@@ -4,6 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 1000 --create-home hub
 COPY hub ./hub
+COPY shadow_executor ./shadow_executor
 COPY web ./web
 COPY registry.json settings.example.json ./
 COPY *.py ./

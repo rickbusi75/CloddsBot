@@ -20,6 +20,7 @@ from . import reporting
 from .collectors import Collectors
 from .evidence import relevance
 from .common import digest, iso, now, number, query, request, stamp, UpstreamError
+from shadow_executor.status import summary as shadow_summary
 from .markets import eligibility, final_result, simulate_fill
 from .store import Store
 
@@ -661,4 +662,4 @@ class Engine:
                 'account': self.store.one('SELECT at,data FROM account_snapshots ORDER BY id DESC LIMIT 1'),
                 'account_error': self.store.get('account_error'),
                 'evaluations': self.store.one('SELECT count(*) tracked,count(result) resolved,avg((probability-result)^2) brier,avg((baseline-result)^2) market_brier FROM forecasts'),
-                'live_dispatch': False}
+                'shadow_executor': shadow_summary(self.store), 'live_dispatch': False}
