@@ -35,3 +35,5 @@ jobs:
       - run: python -m unittest -v test_integration
         env:
           DATABASE_URL: postgresql://research:research_validation_only@127.0.0.1:5432/research
+      - name: Build dedicated shadow image
+        run: docker build -f Dockerfile.executor -t research-executor:validation .
