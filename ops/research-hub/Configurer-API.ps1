@@ -1,17 +1,26 @@
 param(
  [ValidateSet('EIA_API_KEY','CONGRESS_API_KEY','ACLED_ACCESS_TOKEN','UCDP_ACCESS_TOKEN','RELIEFWEB_APPNAME','COINGECKO_DEMO_API_KEY','FOOTBALL_DATA_TOKEN')]
  [string]$Api,
+ [switch]$Check,
  [string]$LabDirectory = 'C:\Users\Rick\Documents\Vps oracle'
 )
 $ErrorActionPreference = 'Stop'
 $sshArgs = @('-i','./ssh-key-2026-10-14.key','-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile=known_hosts','ubuntu@141.253.106.8')
 Push-Location -LiteralPath $LabDirectory
 try {
+ if ($Check) {
+  if ($Api) { throw 'Choisir -Check ou -Api, pas les deux.' }
+  & ssh @sshArgs 'sudo -n python3 /srv/lab/projects/research-hub/configure.py ready'
+  if ($LASTEXITCODE -ne 0) { throw 'Recherche en cours ou service indisponible. Aucun changement ; reessayer apres la fin du travail.' }
+  return
+ }
  if (-not $Api) {
   & ssh @sshArgs 'sudo -n python3 /srv/lab/projects/research-hub/configure.py status'
   if ($LASTEXITCODE -ne 0) { throw 'Inventaire prive non disponible.' }
   return
  }
+ $ready = & ssh @sshArgs 'sudo -n python3 /srv/lab/projects/research-hub/configure.py ready'
+ if ($LASTEXITCODE -ne 0) { throw 'Recherche en cours ou service indisponible. Aucune cle demandee ; reessayer apres la fin du travail.' }
  $secure = Read-Host "Valeur privée pour $Api (aucun fichier local créé)" -AsSecureString
  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
  try {
