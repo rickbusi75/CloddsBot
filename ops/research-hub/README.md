@@ -81,6 +81,18 @@ variante Israel/Israeli est explicite ; les autres variantes et les titres de
 comparatifs généralistes restent une limite de rappel. Il s'agit d'un filtre lexical explicite, pas
 d'une garantie d'équivalence sémantique ou de véracité du document.
 
+Pour les questions électorales nommant un État américain en toutes lettres,
+le titre doit nommer ce même État (phrases complètes, dont West Virginia).
+Un parti partagé ou le fragment « United » ne suffit pas si un sujet plus
+distinctif est présent. Le filtre `subject_anchors_v3_scope` s'applique aussi
+aux preuves citées lors de l'enregistrement puis de la clôture de la décision,
+y compris aux anciens dossiers et résultats d'outil en cache ; une référence
+hors sujet produit `irrelevant_evidence_reference` avant toute prévision ou
+position paper. Les décisions terminées restent historiques et immuables.
+Abréviations d'États, districts, personnes homonymes et appui exact d'une
+affirmation par le corps de l'article restent à vérifier ; des titres nationaux
+contenant une information locale dans le corps seront exclus par prudence.
+
 Le proxy autorise le repli entre fournisseurs du même modèle, sous les plafonds
 de prix et les réservations existants. Un HTTP 429 final crée une attente
 persistante de cinq minutes, respectée avant tout nouvel appel du hub ou

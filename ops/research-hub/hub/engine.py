@@ -18,7 +18,7 @@ from .budget import Budget
 from .accounting import activity_flows, cash_summary, net_reconciliation, positions_value
 from . import reporting
 from .collectors import Collectors
-from .evidence import relevance
+from .evidence import MATCHING, relevance
 from .common import digest, iso, now, number, query, request, stamp, UpstreamError
 from shadow_executor.status import summary as shadow_summary
 from .markets import eligibility, final_result, simulate_fill
@@ -203,7 +203,7 @@ class Engine:
             picked.append({'id': row['id'], 'url': row['url'], 'title': row['title'], 'text': row['data'].get('text', '')[:3500],
                            'source': row['source_id'], 'published_at': str(row['published_at']) if row['published_at'] else None,
                            'observed_at': str(row['observed_at']), 'matched_terms': matched,
-                           'matching': 'subject_anchors_v2_title'})
+                           'matching': MATCHING})
             if len(picked) >= 8:
                 break
         return picked
@@ -292,13 +292,19 @@ class Engine:
                           reason='Revue limitée à la position détenue ; aucune nouvelle entrée. ' + result['reason'])
         if result.get('probability') is not None and (probability is None or not 0 <= probability <= 1 or outcome not in market['outcomes']):
             raise ValueError('invalid_forecast')
-        known = {x['id'] for x in context['evidence']}
+        references = {x['id']: x for x in context['evidence']}
         searched = self.store.get('tool:' + run_id + ':search_evidence', [])
         if isinstance(searched, list):
-            known.update(x['evidence_id'] for x in searched if 'evidence_id' in x)
+            references.update((x['evidence_id'], x) for x in searched if 'evidence_id' in x)
         cited = result.get('evidence_ids', [])
-        if not isinstance(cited, list) or any(not isinstance(x, str) or x not in known for x in cited):
+        if not isinstance(cited, list) or any(not isinstance(x, str) or x not in references for x in cited):
             raise ValueError('unknown_evidence_reference')
+        # Contexts/tools cached before a filter update are not an exemption.
+        # Revalidate cited subjects at staging and completion, before forecasts
+        # or paper positions can be created. This does not verify entailment.
+        if any(not relevance(market['question'], references[x].get('title', ''),
+                             references[x].get('text', ''))['score'] for x in cited):
+            raise ValueError('irrelevant_evidence_reference')
         if result['action'] != 'WAIT':
             if (not cited or not result.get('counterargument') or probability is None or lower is None
                     or not 0 <= lower <= probability <= 1 or result.get('rules_checked') is not True):

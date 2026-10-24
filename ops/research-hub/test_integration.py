@@ -436,7 +436,7 @@ class IntegrationTests(unittest.TestCase):
         self.store.evidence('brave', relevant)
         dossier = self.engine.related_evidence(self.market)
         self.assertEqual([x['url'] for x in dossier], [relevant['url']])
-        self.assertEqual(dossier[0]['matching'], 'subject_anchors_v2_title')
+        self.assertEqual(dossier[0]['matching'], 'subject_anchors_v3_scope')
         run = self.claim()
         with patch.object(self.engine.collectors, 'search', return_value=[unrelated, relevant]):
             result = self.engine.tool(run['run_id'], 'search_evidence')
@@ -453,6 +453,63 @@ class IntegrationTests(unittest.TestCase):
         self.store.evidence('bls', {'url': 'https://example.com/new-inflation', 'title': 'Inflation outlook',
                                     'text': 'Fresh official data.', 'theme': 'economics'})
         self.assertEqual(self.engine.recheck()['newly_flagged'], 1)
+
+    def state_market(self):
+        self.market.update(question='Will the Democrats win the Kansas Senate race in 2026?', theme='politics')
+        self.store.execute('UPDATE markets SET question=%s,theme=%s,data=%s WHERE id=%s',
+                           (self.market['question'], 'politics', Jsonb(self.market), '100'))
+        unrelated = {'url': 'https://example.com/michigan', 'title': 'Democrats lead Michigan Senate race',
+                     'text': 'Kansas is mentioned in this national round-up.', 'theme': 'politics'}
+        relevant = {'url': 'https://example.com/kansas', 'title': 'Kansas Senate race: Democrats campaign',
+                    'text': 'State election update.', 'theme': 'politics'}
+        return unrelated, relevant
+
+    def test_state_scope_applies_to_dossier_agent_search_and_recheck(self):
+        unrelated, relevant = self.state_market()
+        bad = self.store.evidence('brave', unrelated)
+        good = self.store.evidence('brave', relevant)
+        self.assertEqual([x['id'] for x in self.engine.related_evidence(self.market)], [good])
+        run = self.claim()
+        with patch.object(self.engine.collectors, 'search', return_value=[{**unrelated, 'evidence_id': bad},
+                                                                       {**relevant, 'evidence_id': good}]):
+            self.assertEqual([x['evidence_id'] for x in self.engine.tool(run['run_id'], 'search_evidence')], [good])
+        self.engine.complete(run['run_id'], {**self.decision(), 'evidence_ids': [good]})
+        self.store.evidence('brave', {**unrelated, 'url': 'https://example.com/new-michigan'})
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 0)
+        self.store.evidence('brave', {**relevant, 'url': 'https://example.com/new-kansas'})
+        self.assertEqual(self.engine.recheck()['newly_flagged'], 1)
+
+    def test_preupdate_dossier_and_cached_search_citations_are_revalidated(self):
+        run = self.claim()
+        unrelated, relevant = self.state_market()
+        context = self.store.one('SELECT context FROM research WHERE id=%s', (run['run_id'],))['context']
+        context['market'] = self.market
+        context['evidence'] = [{**unrelated, 'id': self.evidence}]
+        self.store.execute('UPDATE research SET context=%s WHERE id=%s', (Jsonb(context), run['run_id']))
+        for source in ('dossier', 'cached_tool'):
+            with self.subTest(source=source):
+                if source == 'cached_tool':
+                    context['evidence'] = []
+                    self.store.execute('UPDATE research SET context=%s WHERE id=%s', (Jsonb(context), run['run_id']))
+                    self.store.put('tool:'+run['run_id']+':search_evidence', [{**unrelated, 'evidence_id': self.evidence}])
+                with self.assertRaisesRegex(ValueError, 'irrelevant_evidence_reference'):
+                    self.engine.stage_decision(run['run_id'], self.decision())
+                self.assertIsNone(self.store.get('decision:'+run['run_id']))
+        self.store.put('tool:'+run['run_id']+':search_evidence', [{**relevant, 'evidence_id': self.evidence}])
+        self.assertEqual(self.engine.stage_decision(run['run_id'], self.decision())['action'], 'BUY')
+
+    def test_staged_citation_revalidation_blocks_completion_without_paper_fill(self):
+        run = self.claim()
+        self.engine.stage_decision(run['run_id'], self.decision())
+        unrelated, _ = self.state_market()
+        context = self.store.one('SELECT context FROM research WHERE id=%s', (run['run_id'],))['context']
+        context['market'] = self.market
+        context['evidence'] = [{**unrelated, 'id': self.evidence}]
+        self.store.execute('UPDATE research SET context=%s WHERE id=%s', (Jsonb(context), run['run_id']))
+        with self.assertRaisesRegex(ValueError, 'irrelevant_evidence_reference'):
+            self.engine.complete(run['run_id'], 'Use saved decision')
+        self.assertEqual(self.store.one('SELECT count(*) n FROM forecasts')['n'], 0)
+        self.assertEqual(self.engine.paper_portfolio()['open'], 0)
 
     def test_digest_owner_and_dst_deduplicate_across_restart(self):
         self.prepare_digest()

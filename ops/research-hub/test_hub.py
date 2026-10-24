@@ -193,6 +193,38 @@ class BudgetTests(unittest.TestCase):
 
 
 class EvidenceAndAccountTests(unittest.TestCase):
+    def test_party_match_cannot_cross_state_or_national_scope(self):
+        question = 'Will the Democrats win the Kansas Senate race in 2026?'
+        for title in ['Democrats fear slippage with Black voters in Michigan Senate race',
+                      'Will Republicans or Democrats win control of the Senate?',
+                      'A trader bets on Democrats keeping the Senate and House']:
+            with self.subTest(title=title):
+                self.assertEqual(relevance(question, title, 'Kansas Senate race discussed here')['score'], 0)
+        self.assertGreater(relevance(question, 'Kansas Senate race: Democrats campaign')['score'], 0)
+
+    def test_state_names_match_whole_phrases_and_preserve_direction(self):
+        for question_state, wrong, right in [('New Mexico', 'Mexico', 'New Mexico'),
+                                             ('West Virginia', 'Virginia', 'West Virginia'),
+                                             ('Virginia', 'West Virginia', 'Virginia'),
+                                             ('North Carolina', 'South Carolina', 'North Carolina')]:
+            question = f'Will Democrats win the {question_state} Senate race?'
+            with self.subTest(state=question_state):
+                self.assertEqual(relevance(question, f'Democrats lead {wrong} Senate race')['score'], 0)
+                self.assertGreater(relevance(question, f'{right} Senate outlook')['score'], 0)
+        self.assertGreater(relevance('Will Democrats win the Virginia Senate race?',
+                                     'Virginia and West Virginia Senate races compared')['score'], 0)
+
+    def test_shared_name_fragment_does_not_make_serbia_a_us_election(self):
+        question = 'Will Aleksandar Vučić – United Serbia win the most seats in the 2026 Serbian parliamentary election?'
+        for title in ['2026 United States Senate elections', 'United States Congress elections, 2026']:
+            self.assertEqual(relevance(question, title)['score'], 0)
+        self.assertGreater(relevance(question, '2026 Serbian parliamentary election')['score'], 0)
+        self.assertGreater(relevance(question, 'Aleksandar Vucic announces plan')['score'], 0)
+
+    def test_geography_is_not_inferred_for_non_electoral_questions(self):
+        self.assertGreater(relevance('Will New York Yankees win?', 'Yankees prepare for playoffs')['score'], 0)
+        self.assertGreater(relevance('Will Democrats win the Senate?', 'Democrats lead Senate poll')['score'], 0)
+
     def test_different_subjects_do_not_match_generic_election_or_date_words(self):
         self.assertEqual(relevance('Will Putin be President in December 2026?', 'US midterm election in December 2026')['score'], 0)
         self.assertEqual(relevance('Will Anthropic reach a valuation in October?', 'Rocket Lab reaches new valuation in October')['score'], 0)
